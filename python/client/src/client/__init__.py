@@ -2,7 +2,8 @@ import argparse
 import logging
 from pathlib import Path
 
-from client.ipc import send
+from client.utils import configure_logging
+from client.watch import watch_folder
 
 logger = logging.getLogger(__name__)
 
@@ -14,22 +15,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)s %(name)s: %(message)s",
-    )
-
-
 def main() -> None:
     configure_logging()
     args = parse_args()
-    payload = f"{args.folder} {args.target_ip}".encode()
-    logger.info(
-        "sending ping folder=%s target_ip=%s", args.folder, args.target_ip
-    )
-    response = send("ping", payload)
-    if response.success:
-        logger.info("response: %s", response.message)
-    else:
-        logger.error("response: %s", response.message)
+    folder = args.folder.expanduser().resolve()
+    if not folder.is_dir():
+        logger.error("not a directory: %s", folder)
+        raise SystemExit(1)
+    watch_folder(folder, args.target_ip)
