@@ -9,7 +9,6 @@ from client.session_manager.manager import (
     SessionManager,
 )
 
-
 SOCKET_PATHS = [
     Path("/tmp/uniflow_receiver_0.sock"),
     Path("/tmp/uniflow_receiver_1.sock"),

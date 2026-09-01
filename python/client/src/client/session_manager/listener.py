@@ -5,7 +5,6 @@ from queue import Queue
 
 from client.common.ipc import create_server
 
-
 MAX_MESSAGE_SIZE = 2 * 1024 * 1024
 
 

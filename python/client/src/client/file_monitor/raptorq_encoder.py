@@ -6,7 +6,6 @@ from raptorq import Encoder
 from client.common.hash_utils import calculate_sha256
 from client.transfer_pb2 import FilePacket
 
-
 SYMBOL_SIZE = 1400
 BLOCK_SIZE = 1024 * 1024
 REPAIR_PACKETS = 10

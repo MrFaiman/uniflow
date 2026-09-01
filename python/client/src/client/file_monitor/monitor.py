@@ -2,7 +2,6 @@ from pathlib import Path
 
 from client.common.round_robin import RoundRobin
 
-
 SMALL_FILE_LIMIT = 10 * 1024 * 1024
 
 

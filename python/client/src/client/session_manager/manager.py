@@ -8,7 +8,6 @@ from client.common.hash_utils import calculate_sha256
 from client.common.packet_hash import calculate_packet_hash
 from client.transfer_pb2 import FilePacket
 
-
 MAX_FILE_SIZE = 1024 * 1024 * 1024
 
 
