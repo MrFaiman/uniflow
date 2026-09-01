@@ -1,6 +1,5 @@
 from enum import IntEnum
 
-# הגדרות ראוטר
 ROUTER_IP = '0.0.0.0'
 ROUTER_PORT = 5000
 

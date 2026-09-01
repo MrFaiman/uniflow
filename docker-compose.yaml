@@ -1,15 +1,15 @@
-version: '3.8'
-
 services:
   router:
     build:
-      context:
+      context: .
+      dockerfile: router/Dockerfile
     networks:
       - uniflow_net
 
   rx_machine:
     build:
-      context: ./rx
+      context: .
+      dockerfile: rx/Dockerfile
     hostname: rx_machine
     networks:
       - uniflow_net
@@ -20,13 +20,13 @@ services:
 
   tx_machine:
     build:
-      context: ./tx
+      context: .
+      dockerfile: tx/Dockerfile
     networks:
       - uniflow_net
     depends_on:
       - router
       - rx_machine
-    # בקוד ה-TX יש להגדיר את כתובת היעד של ה-UDP כ-'router' בפורט 5000
 
 networks:
   uniflow_net:

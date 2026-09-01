@@ -1,6 +1,11 @@
 import socket
 import select
 import random
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from config import ROUTER_IP, RX_HOST, RX_PORT_LIST, DisruptionProbabilities
 
 def apply_bit_flip(data):
