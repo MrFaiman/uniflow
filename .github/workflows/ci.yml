@@ -20,6 +20,20 @@ jobs:
         with:
           go-version-file: go/go.mod
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc-gen-go
+        working-directory: ./go
+        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
+
+      - name: Generate protobuf
+        working-directory: ./go
+        run: go test ./scripts
+
       - name: Run Go tests
         working-directory: ./go
         run: go test ./...
@@ -42,16 +56,21 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Python dependencies
         working-directory: ./python/client
         run: uv sync --dev
+
+      - name: Generate protobuf
+        run: bash scripts/generate-proto.sh python
 
       - name: Run Python lint and tests
         working-directory: ./python/client
         run: |
           uv run ruff check .
-          if find . -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
-            uv run pytest
-          else
-            echo "No Python tests found; skipping pytest."
-          fi
+          uv run pytest

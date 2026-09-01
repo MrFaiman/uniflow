@@ -1,3 +1,7 @@
+# Generated protobuf
+client/src/client/pb/*_pb2.py
+client/src/client/pb/*_pb2.pyi
+
 # Python
 __pycache__/
 *.py[cod]
