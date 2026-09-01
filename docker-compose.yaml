@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  router:
+    build:
+      context:
+    networks:
+      - uniflow_net
+
+  rx_machine:
+    build:
+      context: ./rx
+    hostname: rx_machine
+    networks:
+      - uniflow_net
+    expose:
+      - "6001/udp"
+      - "6002/udp"
+      - "6003/udp"
+
+  tx_machine:
+    build:
+      context: ./tx
+    networks:
+      - uniflow_net
+    depends_on:
+      - router
+      - rx_machine
+    # בקוד ה-TX יש להגדיר את כתובת היעד של ה-UDP כ-'router' בפורט 5000
+
+networks:
+  uniflow_net:
+    driver: bridge
