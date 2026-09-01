@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package uniflow;
+
+message FilePacket {
+    string file_id = 1;
+    string file_name = 2;
+
+    uint64 file_size = 3;
+    string file_hash = 4;
+
+    uint32 packet_index = 5;
+    uint32 total_packets = 6;
+
+    uint32 target_receiver = 7;
+
+    bytes data = 8;
+}
