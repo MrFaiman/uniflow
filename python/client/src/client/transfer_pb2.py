@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0etransfer.proto\x12\x07uniflow\"\xe9\x01\n\nFilePacket\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\t\x12\x11\n\tfile_name\x18\x02 \x01(\t\x12\x11\n\tfile_size\x18\x03 \x01(\x04\x12\x11\n\tfile_hash\x18\x04 \x01(\t\x12\x14\n\x0cpacket_index\x18\x05 \x01(\r\x12\x15\n\rtotal_packets\x18\x06 \x01(\r\x12\x17\n\x0ftarget_receiver\x18\x07 \x01(\r\x12\x0c\n\x04\x64\x61ta\x18\x08 \x01(\x0c\x12\x13\n\x0b\x62lock_index\x18\t \x01(\r\x12\x14\n\x0ctotal_blocks\x18\n \x01(\r\x12\x12\n\nblock_size\x18\x0b \x01(\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0etransfer.proto\x12\x07uniflow\"\xa9\x02\n\nFilePacket\x12\x0f\n\x07\x66ile_id\x18\x01 \x01(\t\x12\x11\n\tfile_name\x18\x02 \x01(\t\x12\x11\n\tfile_size\x18\x03 \x01(\x04\x12\x11\n\tfile_hash\x18\x04 \x01(\t\x12\x14\n\x0cpacket_index\x18\x05 \x01(\r\x12\x15\n\rtotal_packets\x18\x06 \x01(\r\x12\x17\n\x0ftarget_receiver\x18\x07 \x01(\r\x12\x0c\n\x04\x64\x61ta\x18\x08 \x01(\x0c\x12\x13\n\x0b\x62lock_index\x18\t \x01(\r\x12\x14\n\x0ctotal_blocks\x18\n \x01(\r\x12\x12\n\nblock_size\x18\x0b \x01(\x04\x12\x13\n\x0bpacket_hash\x18\x0c \x01(\t\x12\x13\n\x0bsymbol_size\x18\r \x01(\r\x12\x14\n\x0c\x62lock_offset\x18\x0e \x01(\x04\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,5 +32,5 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'transfer_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_FILEPACKET']._serialized_start=28
-  _globals['_FILEPACKET']._serialized_end=261
+  _globals['_FILEPACKET']._serialized_end=325
 # @@protoc_insertion_point(module_scope)
