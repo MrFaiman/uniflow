@@ -3,6 +3,7 @@ import pytest
 from uniflow.transfer import (
     LARGE_FILE_MAX_BYTES,
     SMALL_FILE_MAX_BYTES,
+    PairPool,
     transfer_mode_for_size,
 )
 
@@ -21,3 +22,11 @@ def test_large_file_uses_coordinated() -> None:
 def test_file_over_limit_rejected() -> None:
     with pytest.raises(ValueError, match="exceeds maximum"):
         transfer_mode_for_size(LARGE_FILE_MAX_BYTES + 1)
+
+
+def test_pair_pool_cycles_released_pairs() -> None:
+    pool = PairPool(2)
+    first = pool.acquire()
+    pool.release(first)
+    second = pool.acquire()
+    assert (first, second) == (0, 1)

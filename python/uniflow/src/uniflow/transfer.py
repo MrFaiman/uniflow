@@ -27,7 +27,6 @@ class PairPool:
         with self._lock:
             if index not in self._available:
                 self._available.append(index)
-                self._available.sort()
 
 
 def file_size_for_event(path_text: str, event_type: str) -> int | None:
