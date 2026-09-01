@@ -4,7 +4,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import RX_PORT_LIST
+from devops.config import RX_PORT_LIST
 
 listening_sockets = {}
 

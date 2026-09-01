@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config import ROUTER_HOST, RX_PORT_LIST
+from devops.config import ROUTER_HOST, RX_PORT_LIST
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 counter = 1
