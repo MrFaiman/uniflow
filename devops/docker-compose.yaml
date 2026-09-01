@@ -1,0 +1,33 @@
+services:
+  router:
+    build:
+      context: .
+      dockerfile: router/Dockerfile
+    networks:
+      - uniflow_net
+
+  rx_machine:
+    build:
+      context: .
+      dockerfile: rx/Dockerfile
+    hostname: rx_machine
+    networks:
+      - uniflow_net
+    expose:
+      - "6001/udp"
+      - "6002/udp"
+      - "6003/udp"
+
+  tx_machine:
+    build:
+      context: .
+      dockerfile: tx/Dockerfile
+    networks:
+      - uniflow_net
+    depends_on:
+      - router
+      - rx_machine
+
+networks:
+  uniflow_net:
+    driver: bridge
