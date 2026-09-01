@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from client.common.round_robin import RoundRobin
-
+from client.common.round_robin import round_robin   
 
 SMALL_FILE_LIMIT = 10 * 1024 * 1024
 
@@ -10,8 +9,7 @@ class FileMonitor:
     def __init__(self, watch_folder: Path):
         self.watch_folder = watch_folder
         self.known_files = {}
-        self.round_robin = RoundRobin(3)
-
+        self.round_robin = round_robin(3)
     def get_files(self) -> list[Path]:
         files = []
 
@@ -41,4 +39,4 @@ class FileMonitor:
         return file.stat().st_size < SMALL_FILE_LIMIT
 
     def get_sender(self) -> int:
-        return self.round_robin.next_sender()
+        return next(self.round_robin)
