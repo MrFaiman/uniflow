@@ -46,3 +46,14 @@ def watch_folder(folder: Path, target_ip: str) -> None:
     finally:
         observer.stop()
         observer.join()
+
+
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.INFO)
+    
+    folder_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/data/out")
+    target = sys.argv[2] if len(sys.argv) > 2 else "router"
+    
+    logger.info("Starting watch_folder on %s with target %s", folder_path, target)
+    watch_folder(folder_path, target)

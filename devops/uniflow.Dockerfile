@@ -29,10 +29,11 @@ COPY --from=go-builder /src/python/client/src/client/pb /app/python/client/src/c
 
 WORKDIR /app/python/client
 RUN uv sync --no-dev
-ENV PATH="/app/python/client/.venv/bin:${PATH}"
+
+# הוספת ה-Go binary וסביבת הפייתון ל-PATH
+ENV PATH="/app/go/.bin:/app/python/client/.venv/bin:${PATH}"
 
 COPY devops/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
-
 WORKDIR /app
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

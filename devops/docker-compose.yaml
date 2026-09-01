@@ -22,7 +22,7 @@ services:
       context: ..
       dockerfile: devops/uniflow.Dockerfile
     hostname: rx_machine
-    command: [ "python", "-m", "client.watch", "receive", "/data/in" ]
+    command: [ "receive", "/data/in", "router" ]
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
@@ -42,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: devops/uniflow.Dockerfile
-    command: [ "python", "-m", "client.watch", "send", "/data/out", "router" ]
+    command: [ "send", "/data/out", "router" ]
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
