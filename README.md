@@ -8,4 +8,4 @@ to run use:
 docker compose up --build
 
 to observe the logs use:
-docker compose logs -f router
+docker compose logs -f router or use docker desktop logs
