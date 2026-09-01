@@ -45,13 +45,18 @@ func socketPath() string {
 }
 
 func udpPort() int {
-	raw := os.Getenv("UDP_PORT")
+	name := "UDP_PORT"
+	raw := os.Getenv(name)
+	if raw == "" {
+		name = "PORT"
+		raw = os.Getenv(name)
+	}
 	if raw == "" {
 		return 9000
 	}
 	port, err := strconv.Atoi(raw)
 	if err != nil || port < 1 || port > 65535 {
-		slog.Error("invalid UDP_PORT", "value", raw)
+		slog.Error("invalid env", "name", name, "value", raw)
 		os.Exit(1)
 	}
 	return port

@@ -138,6 +138,9 @@ def _find_go_dir() -> Path:
 
 def _build_binary(go_dir: Path) -> Path:
     out = go_dir / ".bin" / "uniflow"
+    if os.environ.get("UNIFLOW_SKIP_BUILD") == "1" and out.is_file():
+        logger.info("using prebuilt binary %s", out)
+        return out
     out.parent.mkdir(parents=True, exist_ok=True)
     logger.info("building %s", out)
     subprocess.run(

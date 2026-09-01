@@ -4,6 +4,7 @@ from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 from uniflow.ipc import Ipc
 from uniflow.transfer import (
@@ -103,13 +104,20 @@ class FolderEventHandler(FileSystemEventHandler):
             self._send_coordinated(command, data)
 
 
+def _make_observer() -> Observer:
+    if os.environ.get("UNIFLOW_WATCH_POLLING") == "1":
+        logger.info("using polling observer for file watch")
+        return PollingObserver()
+    return Observer()
+
+
 def watch_folder(
     folder: Path,
     target_ip: str,
     ipc_clients: list[Ipc],
 ) -> None:
     handler = FolderEventHandler(target_ip, ipc_clients)
-    observer = Observer()
+    observer = _make_observer()
     observer.schedule(handler, str(folder), recursive=True)
     observer.start()
     logger.info("watching %s target_ip=%s", folder, target_ip)

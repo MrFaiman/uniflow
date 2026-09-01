@@ -1,27 +1,51 @@
+x-common-env: &common-env
+  PORT: "9000"
+  UNIFLOW_WORKERS: "3"
+  UNIFLOW_SKIP_BUILD: "1"
+  IPC_SOCKET_PATH: /tmp/proto_ipc.sock
+
+x-uniflow-build: &uniflow-build
+  context: ..
+  dockerfile: devops/uniflow.Dockerfile
+
 services:
   router:
     build:
       context: .
       dockerfile: router/Dockerfile
+    environment:
+      <<: *common-env
+      PACKET_LOSS: "0.03"
+      BIT_FLIP: "0.03"
+      MISROUTING: "0.03"
+      STATS_INTERVAL_SEC: "10"
     networks:
       - uniflow_net
 
   rx_machine:
-    build:
-      context: .
-      dockerfile: rx/Dockerfile
+    build: *uniflow-build
     hostname: rx_machine
+    command: ["uniflow", "receive", "/data/in"]
+    environment:
+      <<: *common-env
+      RECEIVE_DIR: /data/in
+    volumes:
+      - ./data/in:/data/in
     networks:
       - uniflow_net
     expose:
-      - "6001/udp"
-      - "6002/udp"
-      - "6003/udp"
+      - "9000/udp"
+      - "9001/udp"
+      - "9002/udp"
 
   tx_machine:
-    build:
-      context: .
-      dockerfile: tx/Dockerfile
+    build: *uniflow-build
+    command: ["uniflow", "send", "/data/out", "router"]
+    environment:
+      <<: *common-env
+      UNIFLOW_WATCH_POLLING: "1"
+    volumes:
+      - ./data/out:/data/out
     networks:
       - uniflow_net
     depends_on:

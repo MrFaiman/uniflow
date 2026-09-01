@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> None:
 
 def run_send(folder: Path, target_ip: str) -> None:
     folder = folder.expanduser().resolve()
+    folder.mkdir(parents=True, exist_ok=True)
     if not folder.is_dir():
         logger.error("not a directory: %s", folder)
         raise SystemExit(1)

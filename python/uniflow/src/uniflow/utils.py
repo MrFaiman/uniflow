@@ -26,7 +26,7 @@ def socket_path() -> str:
 
 
 def udp_port() -> int:
-    raw = os.environ.get("UDP_PORT", "9000")
+    raw = os.environ.get("PORT") or os.environ.get("UDP_PORT", "9000")
     return int(raw)
 
 

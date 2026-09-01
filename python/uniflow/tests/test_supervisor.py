@@ -18,7 +18,7 @@ def test_find_go_dir() -> None:
 
 def test_sender_supervisor_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IPC_SOCKET_PATH", "/tmp/uniflow-test.sock")
-    monkeypatch.setenv("UDP_PORT", "9100")
+    monkeypatch.setenv("PORT", "9100")
     monkeypatch.setenv("UNIFLOW_WORKERS", "3")
 
     submitted: list[WorkerSpec] = []
@@ -94,7 +94,7 @@ def test_receiver_supervisor_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("UDP_PORT", "9100")
+    monkeypatch.setenv("PORT", "9100")
     monkeypatch.setenv("UNIFLOW_WORKERS", "3")
 
     submitted: list[WorkerSpec] = []
