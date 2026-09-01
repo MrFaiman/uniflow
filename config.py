@@ -2,6 +2,8 @@ from enum import IntEnum
 
 ROUTER_IP = '0.0.0.0'
 ROUTER_PORT = 5000
+ROUTER_HOST = 'router'
+
 
 RX_HOST = 'rx_machine'
 
