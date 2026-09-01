@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package ipc;
+option go_package = "github.com/MrFaiman/uniflow/pb";
+
+message IPCRequest {
+  string command = 1;
+  bytes data = 2;
+}
+
+message IPCResponse {
+  bool success = 1;
+  string message = 2;
+}
