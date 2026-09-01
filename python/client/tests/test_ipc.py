@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-from client import ipc
 from client.framing import read_proto, write_proto
+from client.ipc import Ipc
 from client.pb import message_pb2
 
 
@@ -16,7 +16,7 @@ def test_send_talks_to_unix_server(
     fd, path = tempfile.mkstemp(prefix="uniflow-", suffix=".sock", dir="/tmp")
     os.close(fd)
     os.unlink(path)
-    monkeypatch.setattr(ipc, "SOCKET_PATH", path)
+    monkeypatch.setattr(Ipc, "path", path)
 
     ready = threading.Event()
     received: dict[str, object] = {}
@@ -43,7 +43,7 @@ def test_send_talks_to_unix_server(
     thread.start()
     try:
         assert ready.wait(timeout=2)
-        response = ipc.send("echo", b"payload")
+        response = Ipc.send("echo", b"payload")
         thread.join(timeout=2)
     finally:
         if os.path.exists(path):
