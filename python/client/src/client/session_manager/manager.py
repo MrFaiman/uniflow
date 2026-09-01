@@ -2,32 +2,12 @@ import os
 from pathlib import Path
 
 from google.protobuf.message import DecodeError
-from raptorq import Decoder
 
 from client.common.hash_utils import calculate_sha256
-from client.common.packet_hash import calculate_packet_hash
+from client.session_manager.decoder import decode_packet
+from client.session_manager.file_session import FileSession
+from client.session_manager.packet_validator import packet_is_valid
 from client.transfer_pb2 import FilePacket
-
-MAX_FILE_SIZE = 1024 * 1024 * 1024
-
-
-class FileSession:
-    def __init__(self, packet: FilePacket, output_folder: Path):
-        self.file_id = packet.file_id
-        self.file_name = Path(packet.file_name).name
-        self.file_size = packet.file_size
-        self.file_hash = packet.file_hash
-        self.total_blocks = packet.total_blocks
-
-        self.decoders = {}
-        self.seen_packets = set()
-        self.completed_blocks = set()
-
-        self.part_path = output_folder / f".{self.file_id}.part"
-        self.final_path = output_folder / self.file_name
-
-        with self.part_path.open("wb") as file:
-            file.truncate(self.file_size)
 
 
 class SessionManager:
@@ -58,7 +38,7 @@ class SessionManager:
         receiver_id: int,
         packet: FilePacket,
     ) -> None:
-        if not self._packet_is_valid(packet):
+        if not packet_is_valid(packet):
             print("Invalid or corrupted packet")
             return
 
@@ -71,103 +51,53 @@ class SessionManager:
                 f"{packet.target_receiver}, got {receiver_id}"
             )
 
-        session = self.sessions.get(packet.file_id)
-
-        if session is None:
-            session = FileSession(packet, self.output_folder)
-            self.sessions[packet.file_id] = session
-
-            print(f"Started receiving {session.file_name}")
-
+        session = self._get_session(packet)
         block = packet.block_index
 
         if block in session.completed_blocks:
             return
 
-        packet_key = (
-            block,
-            packet.packet_index,
-        )
-
-        if packet_key in session.seen_packets:
+        if session.packet_was_seen(block, packet.packet_index):
             return
 
-        session.seen_packets.add(packet_key)
-
-        if block not in session.decoders:
-            session.decoders[block] = Decoder.with_defaults(
-                packet.block_size,
-                packet.symbol_size,
-            )
-
-        try:
-            decoded = session.decoders[block].decode(
-                packet.data
-            )
-        except Exception:
-            print("Invalid RaptorQ packet")
-            return
+        decoded = decode_packet(session, packet)
 
         if decoded is None:
             return
 
-        if len(decoded) != packet.block_size:
-            print("Invalid decoded block")
-            return
-
-        with session.part_path.open("r+b") as file:
-            file.seek(packet.block_offset)
-            file.write(decoded)
-
-        session.completed_blocks.add(block)
-        del session.decoders[block]
+        session.write_block(packet.block_offset, decoded)
+        session.finish_block(block)
 
         print(
             f"{session.file_name}: "
-            f"{len(session.completed_blocks)}"
-            f"/{session.total_blocks} blocks"
+            f"{len(session.completed_blocks)}/"
+            f"{session.total_blocks} blocks"
         )
 
-        if (
-            len(session.completed_blocks)
-            == session.total_blocks
-        ):
+        if session.is_complete():
             self._finish(session)
 
-    def _packet_is_valid(
+    def _get_session(
         self,
         packet: FilePacket,
-    ) -> bool:
-        if (
-            not packet.file_id
-            or not packet.file_name
-            or not packet.data
-            or packet.file_size <= 0
-            or packet.file_size > MAX_FILE_SIZE
-            or packet.total_blocks == 0
-            or packet.block_index >= packet.total_blocks
-            or packet.block_size == 0
-            or packet.symbol_size == 0
-            or (
-                packet.block_offset
-                + packet.block_size
-                > packet.file_size
-            )
-        ):
-            return False
+    ) -> FileSession:
+        session = self.sessions.get(packet.file_id)
 
-        return (
-            calculate_packet_hash(packet)
-            == packet.packet_hash
-        )
+        if session is not None:
+            return session
+
+        session = FileSession(packet, self.output_folder)
+        self.sessions[packet.file_id] = session
+
+        print(f"Started receiving {session.file_name}")
+
+        return session
 
     def _finish(
         self,
         session: FileSession,
     ) -> None:
-        received_hash = calculate_sha256(
-            session.part_path
-        )
+        received_hash = calculate_sha256(session.part_path)
 
         if received_hash == session.file_hash:
             os.replace(
@@ -176,24 +106,15 @@ class SessionManager:
             )
 
             print(
-                f"COMPLETE: "
-                f"{session.file_name} - HASH OK"
+                f"COMPLETE: {session.file_name} - HASH OK"
             )
         else:
-            session.part_path.unlink(
-                missing_ok=True
-            )
+            session.part_path.unlink(missing_ok=True)
 
             print(
-                f"FAILED: "
-                f"{session.file_name} "
+                f"FAILED: {session.file_name} "
                 f"- HASH MISMATCH"
             )
 
-        self.finished_sessions.add(
-            session.file_id
-        )
-
-        del self.sessions[
-            session.file_id
-        ]
+        self.finished_sessions.add(session.file_id)
+        del self.sessions[session.file_id]
