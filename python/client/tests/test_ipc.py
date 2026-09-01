@@ -1,6 +1,11 @@
+import struct
 import threading
 
-from client.common.ipc import connect_to_server, create_server
+from client.common.ipc import (
+    connect_to_server,
+    create_server,
+    send_message,
+)
 
 
 def test_unix_socket(tmp_path):
@@ -10,7 +15,11 @@ def test_unix_socket(tmp_path):
 
     def receive_message():
         connection, _ = server.accept()
-        message = connection.recv(1024)
+
+        size_data = connection.recv(4)
+        message_size = struct.unpack("!I", size_data)[0]
+
+        message = connection.recv(message_size)
 
         assert message == b"Hello"
 
@@ -20,7 +29,9 @@ def test_unix_socket(tmp_path):
     thread.start()
 
     client = connect_to_server(socket_path)
-    client.sendall(b"Hello")
+
+    send_message(client, b"Hello")
+
     client.close()
 
     thread.join()

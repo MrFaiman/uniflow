@@ -2,7 +2,9 @@ from pathlib import Path
 
 from client.common.round_robin import RoundRobin
 
+
 SMALL_FILE_LIMIT = 10 * 1024 * 1024
+
 
 class FileMonitor:
     def __init__(self, watch_folder: Path):
@@ -38,8 +40,5 @@ class FileMonitor:
     def is_small_file(self, file: Path) -> bool:
         return file.stat().st_size < SMALL_FILE_LIMIT
 
-    def get_sender(self, file: Path) -> int:
-        if self.is_small_file(file):
-            return self.round_robin.next_sender()
-
-        return -1
+    def get_sender(self) -> int:
+        return self.round_robin.next_sender()
