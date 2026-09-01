@@ -1,0 +1,19 @@
+# Go
+/bin/
+/build/
+/out/
+/vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
