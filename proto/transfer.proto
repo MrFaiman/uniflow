@@ -19,4 +19,8 @@ message FilePacket {
     uint32 block_index = 9;
     uint32 total_blocks = 10;
     uint64 block_size = 11;
+
+    string packet_hash = 12;
+    uint32 symbol_size = 13;
+    uint64 block_offset = 14;
 }
