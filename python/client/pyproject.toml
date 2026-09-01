@@ -10,6 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "grpcio-tools>=1.83.1",
     "protobuf>=7.36.1",
+    "raptorq>=2.0.0",
 ]
 
 [project.scripts]

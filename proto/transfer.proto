@@ -15,4 +15,8 @@ message FilePacket {
     uint32 target_receiver = 7;
 
     bytes data = 8;
+
+    uint32 block_index = 9;
+    uint32 total_blocks = 10;
+    uint64 block_size = 11;
 }

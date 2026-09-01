@@ -1,4 +1,5 @@
 import socket
+import struct
 from pathlib import Path
 
 
@@ -18,3 +19,10 @@ def connect_to_server(socket_path: Path) -> socket.socket:
     client.connect(str(socket_path))
 
     return client
+
+
+def send_message(connection: socket.socket, data: bytes) -> None:
+    message_size = struct.pack("!I", len(data))
+
+    connection.sendall(message_size)
+    connection.sendall(data)
