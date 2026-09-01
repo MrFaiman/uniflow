@@ -6,6 +6,9 @@ option go_package = "github.com/MrFaiman/uniflow/pb";
 message IPCRequest {
   string command = 1;
   bytes data = 2;
+  string target_ip = 3;
+  uint64 object_id = 4;
+  bool coordinated = 5;
 }
 
 message IPCResponse {

@@ -25,6 +25,23 @@ def socket_path() -> str:
     return path
 
 
+def udp_port() -> int:
+    raw = os.environ.get("UDP_PORT", "9000")
+    return int(raw)
+
+
+def receive_dir() -> str:
+    return os.environ.get("RECEIVE_DIR", "/tmp/uniflow-in")
+
+
+def worker_count() -> int:
+    raw = os.environ.get("UNIFLOW_WORKERS", "3")
+    count = int(raw)
+    if count < 3:
+        raise RuntimeError("UNIFLOW_WORKERS must be at least 3")
+    return count
+
+
 def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,

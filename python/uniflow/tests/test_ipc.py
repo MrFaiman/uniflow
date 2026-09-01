@@ -5,9 +5,9 @@ import threading
 
 import pytest
 
-from client.framing import read_proto, write_proto
-from client.ipc import Ipc
-from client.pb import message_pb2
+from uniflow.framing import read_proto, write_proto
+from uniflow.ipc import Ipc
+from uniflow.pb import message_pb2
 
 
 def test_send_talks_to_unix_server(
@@ -16,7 +16,7 @@ def test_send_talks_to_unix_server(
     fd, path = tempfile.mkstemp(prefix="uniflow-", suffix=".sock", dir="/tmp")
     os.close(fd)
     os.unlink(path)
-    monkeypatch.setattr(Ipc, "path", path)
+    ipc = Ipc(path)
 
     ready = threading.Event()
     received: dict[str, object] = {}
@@ -31,6 +31,9 @@ def test_send_talks_to_unix_server(
                 req = read_proto(conn, message_pb2.IPCRequest)
                 received["command"] = req.command
                 received["data"] = req.data
+                received["target_ip"] = req.target_ip
+                received["object_id"] = req.object_id
+                received["coordinated"] = req.coordinated
                 write_proto(
                     conn,
                     message_pb2.IPCResponse(
@@ -43,7 +46,13 @@ def test_send_talks_to_unix_server(
     thread.start()
     try:
         assert ready.wait(timeout=2)
-        response = Ipc.send("echo", b"payload")
+        response = ipc.send(
+            "echo",
+            b"payload",
+            target_ip="10.0.0.1",
+            object_id=7,
+            coordinated=False,
+        )
         thread.join(timeout=2)
     finally:
         if os.path.exists(path):
@@ -51,5 +60,8 @@ def test_send_talks_to_unix_server(
 
     assert received["command"] == "echo"
     assert received["data"] == b"payload"
+    assert received["target_ip"] == "10.0.0.1"
+    assert received["object_id"] == 7
+    assert received["coordinated"] is False
     assert response.success is True
     assert response.message == "handled echo"

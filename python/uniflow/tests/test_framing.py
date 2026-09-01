@@ -1,7 +1,7 @@
 import socket
 
-from client.framing import read_proto, write_proto
-from client.pb import message_pb2
+from uniflow.framing import read_proto, write_proto
+from uniflow.pb import message_pb2
 
 
 def test_write_read_request_roundtrip() -> None:

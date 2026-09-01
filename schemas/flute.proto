@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package custom_flute;
+
+option go_package = "github.com/MrFaiman/uniflow/pb";
+
+// ---------------------------------------------------------
+// 1. The Metadata (Replaces the FLUTE XML FDT)
+// Sent periodically so late-joiners know what's being broadcast
+// ---------------------------------------------------------
+message FileDeliveryTable {
+  uint64 session_id = 1;    // TSI: Transport Session Identifier (e.g., the channel)
+  uint64 object_id = 2;     // TOI: Transport Object Identifier (e.g., the file ID)
+
+  string file_name = 3;
+  uint64 file_size = 4;
+  string content_type = 5;
+
+  // RaptorQ (RFC 6330) FEC Object Transmission Information (OTI)
+  message RaptorQParameters {
+    uint32 symbol_size = 1;     // Size of each data droplet (T)
+    uint32 num_symbols = 2;     // Total original symbols (K)
+    uint32 source_blocks = 3;   // Number of blocks the file is split into (Z)
+  }
+
+  RaptorQParameters fec_params = 6;
+  bool coordinated = 7;  // true: split across worker team; false: single sender/receiver pair
+}
+
+// ---------------------------------------------------------
+// 2. The Data Packet (Replaces FLUTE LCT/ALC headers)
+// ---------------------------------------------------------
+message FluteDataPacket {
+  uint64 session_id = 1;    // TSI: Which stream does this belong to?
+  uint64 object_id = 2;     // TOI: Which file does this belong to?
+
+  // FEC Payload ID (Crucial for the RaptorQ decoder)
+  uint32 source_block_number = 3; // SBN: Which block of the file
+  uint32 encoding_symbol_id = 4;  // ESI: The fountain drop ID
+
+  // The actual RaptorQ encoded byte payload
+  bytes payload = 5;
+}
+
+// ---------------------------------------------------------
+// 3. The UDP Wrapper
+// Since UDP doesn't guarantee order, we wrap both in one message
+// ---------------------------------------------------------
+message UdpDatagram {
+  oneof payload {
+    FileDeliveryTable fdt = 1;
+    FluteDataPacket data = 2;
+  }
+}

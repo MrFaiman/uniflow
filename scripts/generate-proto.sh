@@ -9,7 +9,7 @@ generate_go() {
 }
 
 generate_python() {
-  local out="$root/python/client/src/client/pb"
+  local out="$root/python/uniflow/src/uniflow/pb"
   mkdir -p "$out"
   protoc \
     --python_out="$out" \
