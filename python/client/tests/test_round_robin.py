@@ -1,11 +1,11 @@
-from client.common.round_robin import RoundRobin
+from client.common.round_robin import round_robin
 
 
 def test_round_robin():
-    round_robin = RoundRobin(3)
+    senders = round_robin(3)
 
-    assert round_robin.next_sender() == 0
-    assert round_robin.next_sender() == 1
-    assert round_robin.next_sender() == 2
-    assert round_robin.next_sender() == 0
-    assert round_robin.next_sender() == 1
+    assert next(senders) == 0
+    assert next(senders) == 1
+    assert next(senders) == 2
+    assert next(senders) == 0
+    assert next(senders) == 1

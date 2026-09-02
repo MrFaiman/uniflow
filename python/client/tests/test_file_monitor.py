@@ -22,19 +22,15 @@ def test_get_files(tmp_path):
 def test_get_new_file(tmp_path):
     monitor = FileMonitor(tmp_path)
 
-    # First scan - the folder is empty
     assert monitor.get_changed_files() == []
 
-    # Create a new file
-    new_file = tmp_path / "new_file.txt"
-    new_file.write_text("Hello")
+    file = tmp_path / "new_file.txt"
+    file.write_text("Hello")
 
-    # The new file should be detected
     changed_files = monitor.get_changed_files()
 
-    assert new_file in changed_files
+    assert changed_files == [file]
 
-    # Nothing changed since the last scan
     assert monitor.get_changed_files() == []
 
 
@@ -44,34 +40,10 @@ def test_get_modified_file(tmp_path):
 
     monitor = FileMonitor(tmp_path)
 
-    # First scan remembers the existing file
     monitor.get_changed_files()
 
-    # Modify the file
-    file.write_text("Hello World")
+    file.write_text("Hello again")
 
-    # The modified file should be detected
     changed_files = monitor.get_changed_files()
 
-    assert file in changed_files
-
-def test_small_file(tmp_path):
-    file = tmp_path / "small_file.txt"
-
-    # Create a file just under 10 MB
-    file.write_bytes(b"0" * (10 * 1024 * 1024 - 1))
-
-    monitor = FileMonitor(tmp_path)
-
-    assert monitor.is_small_file(file) is True
-
-
-def test_large_file(tmp_path):
-    file = tmp_path / "large_file.txt"
-
-    # Create a file exactly 10 MB
-    file.write_bytes(b"0" * (10 * 1024 * 1024))
-
-    monitor = FileMonitor(tmp_path)
-
-    assert monitor.is_small_file(file) is False
+    assert changed_files == [file]

@@ -1,23 +1,40 @@
+import os
 from pathlib import Path
 from queue import Queue
 from threading import Thread
 
 from client.session_manager.listener import (
-    listen_to_receiver,
+    listen_to_receivers,
 )
 from client.session_manager.manager import (
     SessionManager,
 )
 
-SOCKET_PATHS = [
-    Path("/tmp/uniflow_receiver_0.sock"),
-    Path("/tmp/uniflow_receiver_1.sock"),
-    Path("/tmp/uniflow_receiver_2.sock"),
-]
+DEFAULT_SOCKET_PATH = "/tmp/proto_ipc.sock"
+DEFAULT_RECEIVE_DIR = "/data/in"
+
+
+def get_socket_path() -> Path:
+    return Path(
+        os.getenv(
+            "IPC_SOCKET_PATH",
+            DEFAULT_SOCKET_PATH,
+        )
+    )
+
+
+def get_output_folder() -> Path:
+    return Path(
+        os.getenv(
+            "RECEIVE_DIR",
+            DEFAULT_RECEIVE_DIR,
+        )
+    )
 
 
 def run_session_manager(
     output_folder: Path,
+    socket_path: Path,
 ) -> None:
     manager = SessionManager(
         output_folder
@@ -25,39 +42,34 @@ def run_session_manager(
 
     messages = Queue()
 
-    for receiver_id, socket_path in enumerate(
-        SOCKET_PATHS
-    ):
-        thread = Thread(
-            target=listen_to_receiver,
-            args=(
-                receiver_id,
-                socket_path,
-                messages,
-            ),
-            daemon=True,
-        )
+    thread = Thread(
+        target=listen_to_receivers,
+        args=(
+            socket_path,
+            messages,
+        ),
+        daemon=True,
+    )
 
-        thread.start()
+    thread.start()
 
     print(
-        "Session Manager is running"
+        f"Session Manager writing to "
+        f"{output_folder}"
     )
 
     while True:
-        receiver_id, message = (
-            messages.get()
-        )
+        message = messages.get()
 
         manager.handle_serialized_packet(
-            receiver_id,
-            message,
+            message
         )
 
 
 def main() -> None:
     run_session_manager(
-        Path("received_files")
+        get_output_folder(),
+        get_socket_path(),
     )
 
 

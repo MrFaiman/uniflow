@@ -27,6 +27,7 @@ def test_corrupted_packet_is_rejected(
     tmp_path,
 ):
     source = tmp_path / "source.txt"
+
     source.write_bytes(
         b"Hello World " * 1000
     )
@@ -55,15 +56,12 @@ def test_corrupted_packet_is_rejected(
         output_folder
     )
 
-    manager.handle_packet(
-        0,
-        packet,
-    )
+    manager.handle_packet(packet)
 
     assert manager.sessions == {}
 
 
-def test_loss_and_misrouting(
+def test_loss_and_out_of_order(
     tmp_path,
 ):
     source = tmp_path / "large.bin"
@@ -107,12 +105,11 @@ def test_loss_and_misrouting(
         for packet in block_packets:
             prepare_packet(
                 packet,
-                0,
+                packet.packet_index % 3,
             )
 
             manager.handle_serialized_packet(
-                2,
-                packet.SerializeToString(),
+                packet.SerializeToString()
             )
 
             if (
@@ -188,8 +185,7 @@ def test_two_files_at_same_time(
             )
 
             manager.handle_packet(
-                0,
-                first_packet,
+                first_packet
             )
 
         if second_packet is not None:
@@ -199,8 +195,7 @@ def test_two_files_at_same_time(
             )
 
             manager.handle_packet(
-                1,
-                second_packet,
+                second_packet
             )
 
     assert (
