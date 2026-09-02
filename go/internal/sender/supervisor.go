@@ -1,12 +1,15 @@
 package sender
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/MrFaiman/uniflow/internal/child"
@@ -37,7 +40,9 @@ func RunSupervisor() error {
 		return err
 	}
 
+	supervisorDone := make(chan struct{})
 	go func() {
+		defer close(supervisorDone)
 		if err := supervisor.Run(); err != nil {
 			slog.Error("sender supervisor failed", "err", err)
 		}
@@ -45,12 +50,14 @@ func RunSupervisor() error {
 
 	if err := waitForWorkerSockets(workers, 30*time.Second); err != nil {
 		supervisor.Stop()
+		<-supervisorDone
 		return err
 	}
 
 	listener, err := ipc.ListenUnix(config.SocketPath())
 	if err != nil {
 		supervisor.Stop()
+		<-supervisorDone
 		return fmt.Errorf("listen ipc: %w", err)
 	}
 	defer func() {
@@ -59,6 +66,19 @@ func RunSupervisor() error {
 	}()
 
 	slog.Info("sender supervisor listening", "path", config.SocketPath(), "workers", workers)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	shutdown := make(chan struct{})
+	go func() {
+		<-sigCh
+		close(shutdown)
+		slog.Info("sender supervisor shutting down")
+		_ = listener.Close()
+		supervisor.Stop()
+	}()
 
 	conns := make([]net.Conn, workers)
 	var connsMu sync.Mutex
@@ -75,6 +95,16 @@ func RunSupervisor() error {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			select {
+			case <-shutdown:
+				<-supervisorDone
+				return nil
+			default:
+			}
+			if errors.Is(err, net.ErrClosed) {
+				<-supervisorDone
+				return nil
+			}
 			slog.Warn("accept failed", "err", err)
 			continue
 		}
