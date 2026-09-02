@@ -36,7 +36,6 @@ func TestTryAssembleChecksumMismatch(t *testing.T) {
 	recvDir := t.TempDir()
 	recv, conn := startTestReceiver(t, recvDir, 19100)
 	defer recv.Close()
-	defer conn.Close()
 
 	objectID := uint64(7)
 	data := []byte("payload for checksum test")
@@ -67,7 +66,6 @@ func TestTryAssembleEmptyFile(t *testing.T) {
 	recvDir := t.TempDir()
 	recv, conn := startTestReceiver(t, recvDir, 19101)
 	defer recv.Close()
-	defer conn.Close()
 
 	objectID := uint64(8)
 	fdt := &pb.FileDeliveryTable{
@@ -92,7 +90,6 @@ func TestTryAssembleMissingChecksum(t *testing.T) {
 	recvDir := t.TempDir()
 	recv, conn := startTestReceiver(t, recvDir, 19102)
 	defer recv.Close()
-	defer conn.Close()
 
 	objectID := uint64(9)
 	data := []byte("no checksum")
@@ -138,6 +135,7 @@ func startTestReceiver(t *testing.T, recvDir string, port int) (*transfer.Receiv
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = conn.Close() })
 
 	return recv, conn
 }

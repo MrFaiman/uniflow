@@ -14,9 +14,8 @@ import (
 
 func TestNestedFileRoundtrip(t *testing.T) {
 	recvDir := t.TempDir()
-	recv, conn := startTestReceiver(t, recvDir, 19200)
+	recv, _ := startTestReceiver(t, recvDir, 19200)
 	defer recv.Close()
-	defer conn.Close()
 
 	content := []byte("nested payload")
 	tmp := filepath.Join(t.TempDir(), "file.txt")
@@ -43,7 +42,6 @@ func TestPathOperationMkdir(t *testing.T) {
 	recvDir := t.TempDir()
 	recv, conn := startTestReceiver(t, recvDir, 19201)
 	defer recv.Close()
-	defer conn.Close()
 
 	if err := sendPathOp(conn, &pb.PathOperation{
 		Op:           pb.PathOperation_MKDIR,
@@ -65,7 +63,6 @@ func TestPathOperationRemoveFile(t *testing.T) {
 
 	recv, conn := startTestReceiver(t, recvDir, 19202)
 	defer recv.Close()
-	defer conn.Close()
 
 	if err := sendPathOp(conn, &pb.PathOperation{
 		Op:           pb.PathOperation_REMOVE,
@@ -89,7 +86,6 @@ func TestPathOperationRemoveDirectoryRecursive(t *testing.T) {
 
 	recv, conn := startTestReceiver(t, recvDir, 19203)
 	defer recv.Close()
-	defer conn.Close()
 
 	if err := sendPathOp(conn, &pb.PathOperation{
 		Op:           pb.PathOperation_REMOVE,
@@ -112,7 +108,6 @@ func TestPathOperationRenameFile(t *testing.T) {
 
 	recv, conn := startTestReceiver(t, recvDir, 19204)
 	defer recv.Close()
-	defer conn.Close()
 
 	if err := sendPathOp(conn, &pb.PathOperation{
 		Op:               pb.PathOperation_RENAME,
@@ -136,7 +131,6 @@ func TestPathOperationRenameDirectory(t *testing.T) {
 
 	recv, conn := startTestReceiver(t, recvDir, 19205)
 	defer recv.Close()
-	defer conn.Close()
 
 	if err := sendPathOp(conn, &pb.PathOperation{
 		Op:               pb.PathOperation_RENAME,
