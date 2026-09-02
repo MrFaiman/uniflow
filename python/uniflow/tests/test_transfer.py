@@ -24,6 +24,13 @@ def test_file_over_limit_rejected() -> None:
         transfer_mode_for_size(LARGE_FILE_MAX_BYTES + 1)
 
 
+def test_max_file_bytes_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UNIFLOW_MAX_FILE_BYTES", str(2 * 1024 * 1024 * 1024))
+    assert transfer_mode_for_size(LARGE_FILE_MAX_BYTES + 1) == "coordinated"
+    with pytest.raises(ValueError, match="exceeds maximum"):
+        transfer_mode_for_size(2 * 1024 * 1024 * 1024 + 1)
+
+
 def test_pair_pool_cycles_released_pairs() -> None:
     pool = PairPool(2)
     first = pool.acquire()

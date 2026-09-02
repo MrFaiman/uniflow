@@ -62,12 +62,15 @@ func handleIPCConn(conn net.Conn, sender *Sender) error {
 	}
 
 	if resp.Success {
-		if err := sender.handleIPCCommand(
-			req.Command,
-			req.Data,
-			req.ObjectId,
-			req.Coordinated,
-		); err != nil {
+		if err := sender.handleIPCCommand(ipcCommand{
+			command:          req.Command,
+			data:             req.Data,
+			objectID:         req.ObjectId,
+			coordinated:      req.Coordinated,
+			relativePath:     req.RelativePath,
+			destRelativePath: req.DestRelativePath,
+			isDirectory:      req.IsDirectory,
+		}); err != nil {
 			resp.Success = false
 			resp.Message = err.Error()
 		}

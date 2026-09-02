@@ -11,7 +11,7 @@ tx_machine (uniflow send) --> router (chaos) --> rx_machine (uniflow receive)
 
 - **tx_machine** watches `data/out/` and sends files to hostname `router`
 - **router** listens on UDP ports 9000–9002, applies disruptions, forwards to `rx_machine`
-- **rx_machine** receives on UDP 9000–9002 and assembles files into `data/in/`
+- **rx_machine** receives on UDP 9000–9002 and assembles files into `data/in/`, preserving relative paths (for example `data/out/sub/file.txt` arrives as `data/in/sub/file.txt`)
 
 ## Quick start
 
@@ -72,6 +72,7 @@ Uniflow services:
 | `UNIFLOW_WORKERS` | `3` | Sender/receiver worker count |
 | `UNIFLOW_SKIP_BUILD` | `1` | Use prebuilt Go binary in the image |
 | `UNIFLOW_WATCH_POLLING` | `1` (tx only) | Poll bind mounts instead of inotify |
+| `UNIFLOW_MAX_FILE_BYTES` | `5368709120` (5 GiB) | Maximum file size for coordinated transfer |
 
 ### Stress testing
 
@@ -94,3 +95,48 @@ failure modes.
 - `data/in/` — received files (bind-mounted into rx_machine)
 
 Only `.gitkeep` files are tracked; transferred files are ignored by git.
+
+## Automated transfer test
+
+Run the full multi-file workload (small, nested, coordinated, 1 GiB, and 1.5 GiB files)
+with one command:
+
+```bash
+cd devops
+./run-transfer-test.sh
+```
+
+The runner:
+
+1. Starts `docker compose up -d --build`
+2. Waits for tx/rx services to be ready
+3. Generates deterministic test files into `data/out/` (see [`scripts/fixtures.manifest`](scripts/fixtures.manifest))
+4. Polls `data/in/` until every file matches size and SHA-256, or times out
+5. Tears down compose on exit (unless `--keep-running`)
+
+Options:
+
+```bash
+./run-transfer-test.sh --keep-running          # leave stack up for debugging
+./run-transfer-test.sh --chaos harsh         # 15% loss/flip/misroute
+./run-transfer-test.sh --timeout 7200        # 2 hour verification window
+UNIFLOW_TEST_TIMEOUT=7200 ./run-transfer-test.sh
+```
+
+Requirements:
+
+- ~3+ GiB free disk under `devops/data/` for generated fixtures
+- Sufficient RAM for the largest file (sender and receiver load full file contents in memory)
+- Docker with enough resources; first run builds images and is slow
+
+Manual steps (generate or verify only):
+
+```bash
+python3 scripts/generate_test_files.py
+python3 scripts/verify_transfers.py --wait --timeout-sec 3600
+```
+
+Example success output ends with `Transfer test passed.` and `All transfers verified.`
+
+If verification times out, try lowering chaos (`--chaos mild`), raising `--timeout`, or
+checking `docker compose logs tx_machine rx_machine router`.

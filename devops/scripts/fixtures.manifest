@@ -1,0 +1,7 @@
+# relative_path size_bytes
+tiny.txt 64
+small.bin 1048576
+nested/sub/file.bin 4194304
+medium.bin 52428800
+large-1gb.bin 1073741824
+xlarge-1.5gb.bin 1610612736

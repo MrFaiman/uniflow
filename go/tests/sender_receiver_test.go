@@ -44,7 +44,7 @@ func TestSenderReceiverRoundtrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sender.SendFile(tmp, 1, false); err != nil {
+	if err := sender.SendFile(tmp, "payload.bin", 1, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,7 +93,7 @@ func TestCoordinatedSenderReceiverRoundtrip(t *testing.T) {
 	}
 
 	for _, sender := range senders {
-		if err := sender.SendFile(tmp, 1, true); err != nil {
+		if err := sender.SendFile(tmp, "payload.bin", 1, true); err != nil {
 			t.Fatal(err)
 		}
 	}

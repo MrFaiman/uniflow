@@ -14,12 +14,12 @@ import (
 )
 
 type Sender struct {
-	conn         *net.UDPConn
-	destAddrs    []*net.UDPAddr
-	sessionID    uint64
-	workerIndex  uint32
-	workerCount  uint32
-	destPorts    []int
+	conn        *net.UDPConn
+	destAddrs   []*net.UDPAddr
+	sessionID   uint64
+	workerIndex uint32
+	workerCount uint32
+	destPorts   []int
 }
 
 func NewSender(destPorts []int) (*Sender, error) {
@@ -90,25 +90,69 @@ func (s *Sender) sendDatagram(datagram *pb.UdpDatagram) error {
 	return nil
 }
 
-func (s *Sender) SendFile(path string, objectID uint64, coordinated bool) error {
+func (s *Sender) sendPathOperation(
+	op pb.PathOperation_Op,
+	relPath string,
+	destRelPath string,
+	isDirectory bool,
+) error {
+	if _, err := NormalizeRelativePath(relPath); err != nil {
+		return fmt.Errorf("invalid relative path: %w", err)
+	}
+	if op == pb.PathOperation_RENAME {
+		if _, err := NormalizeRelativePath(destRelPath); err != nil {
+			return fmt.Errorf("invalid dest relative path: %w", err)
+		}
+	}
+	pathOp := &pb.PathOperation{
+		SessionId:        s.sessionID,
+		Op:               op,
+		RelativePath:     relPath,
+		DestRelativePath: destRelPath,
+		IsDirectory:      isDirectory,
+	}
+	if err := s.sendDatagram(&pb.UdpDatagram{
+		Payload: &pb.UdpDatagram_PathOp{PathOp: pathOp},
+	}); err != nil {
+		return err
+	}
+	slog.Info(
+		"sent path operation",
+		"op", op.String(),
+		"path", relPath,
+		"dest", destRelPath,
+		"is_directory", isDirectory,
+	)
+	return nil
+}
+
+func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated bool) error {
 	if objectID == 0 {
 		return fmt.Errorf("object_id is required")
 	}
+	if relPath == "" {
+		return fmt.Errorf("relative_path is required")
+	}
+	if _, err := NormalizeRelativePath(relPath); err != nil {
+		return fmt.Errorf("invalid relative path: %w", err)
+	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}
 
 	plan := PlanFile(data)
+	checksum := FileChecksum(data)
 
 	fdt := &pb.FileDeliveryTable{
 		SessionId:   s.sessionID,
 		ObjectId:    objectID,
-		FileName:    filepath.Base(path),
+		FileName:    relPath,
 		FileSize:    uint64(plan.OriginalLength),
-		ContentType: mime.TypeByExtension(filepath.Ext(path)),
+		ContentType: mime.TypeByExtension(filepath.Ext(absPath)),
 		Coordinated: coordinated,
+		Checksum:    checksum,
 		FecParams: &pb.FileDeliveryTable_RaptorQParameters{
 			SymbolSize:   plan.SymbolSize,
 			NumSymbols:   plan.TotalSymbols,
@@ -137,7 +181,8 @@ func (s *Sender) SendFile(path string, objectID uint64, coordinated bool) error 
 		}
 		slog.Info(
 			"sent empty file",
-			"path", path,
+			"path", absPath,
+			"relative_path", relPath,
 			"object_id", objectID,
 			"coordinated", coordinated,
 		)
@@ -191,7 +236,8 @@ func (s *Sender) SendFile(path string, objectID uint64, coordinated bool) error 
 
 	slog.Info(
 		"sent file chunks",
-		"path", path,
+		"path", absPath,
+		"relative_path", relPath,
 		"object_id", objectID,
 		"worker", s.workerIndex,
 		"coordinated", coordinated,
@@ -201,25 +247,52 @@ func (s *Sender) SendFile(path string, objectID uint64, coordinated bool) error 
 	return nil
 }
 
-func (s *Sender) handleIPCCommand(
-	command string,
-	data []byte,
-	objectID uint64,
-	coordinated bool,
-) error {
-	switch command {
-	case "created", "modified":
-		path := string(data)
-		return s.SendFile(path, objectID, coordinated)
+type ipcCommand struct {
+	command          string
+	data             []byte
+	objectID         uint64
+	coordinated      bool
+	relativePath     string
+	destRelativePath string
+	isDirectory      bool
+}
+
+func (s *Sender) handleIPCCommand(req ipcCommand) error {
+	switch req.command {
+	case "created":
+		if req.isDirectory {
+			return s.sendPathOperation(pb.PathOperation_MKDIR, req.relativePath, "", true)
+		}
+		return s.SendFile(string(req.data), req.relativePath, req.objectID, req.coordinated)
+	case "modified":
+		if req.isDirectory {
+			return nil
+		}
+		return s.SendFile(string(req.data), req.relativePath, req.objectID, req.coordinated)
+	case "deleted":
+		return s.sendPathOperation(pb.PathOperation_REMOVE, req.relativePath, "", req.isDirectory)
 	case "moved":
-		parts := strings.SplitN(string(data), "\n", 2)
+		if err := s.sendPathOperation(
+			pb.PathOperation_RENAME,
+			req.relativePath,
+			req.destRelativePath,
+			req.isDirectory,
+		); err != nil {
+			return err
+		}
+		if req.isDirectory {
+			return nil
+		}
+		parts := strings.SplitN(string(req.data), "\n", 2)
 		if len(parts) != 2 {
 			return fmt.Errorf("moved event missing dest path")
 		}
-		return s.SendFile(parts[1], objectID, coordinated)
-	case "deleted":
-		return nil
+		destAbs := parts[1]
+		if _, err := os.Stat(destAbs); err != nil {
+			return nil
+		}
+		return s.SendFile(destAbs, req.destRelativePath, req.objectID, req.coordinated)
 	default:
-		return fmt.Errorf("unknown command %q", command)
+		return fmt.Errorf("unknown command %q", req.command)
 	}
 }

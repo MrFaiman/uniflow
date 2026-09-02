@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 from watchdog.events import (
     DirCreatedEvent,
+    DirDeletedEvent,
+    DirMovedEvent,
     FileClosedEvent,
     FileCreatedEvent,
     FileMovedEvent,
@@ -10,6 +12,10 @@ from watchdog.events import (
 
 from uniflow.ipc import Ipc
 from uniflow.watch import FolderEventHandler
+
+
+def _handler(tmp_path: Path, ipc_clients: list[Ipc]) -> FolderEventHandler:
+    return FolderEventHandler(tmp_path, "10.0.0.1", ipc_clients)
 
 
 def test_handler_broadcasts_coordinated_for_large_file(
@@ -29,12 +35,15 @@ def test_handler_broadcasts_coordinated_for_large_file(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         sent.append((coordinated, object_id))
 
     monkeypatch.setattr(ipc0, "send", fake_send)
     monkeypatch.setattr(ipc1, "send", fake_send)
-    handler = FolderEventHandler("10.0.0.1", [ipc0, ipc1])
+    handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(large)))
     assert sent == [(True, 1), (True, 1)]
 
@@ -56,6 +65,9 @@ def test_handler_single_pair_for_small_file(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         sent.append((0, coordinated, object_id))
 
@@ -65,12 +77,15 @@ def test_handler_single_pair_for_small_file(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         sent.append((1, coordinated, object_id))
 
     monkeypatch.setattr(ipc0, "send", fake_send0)
     monkeypatch.setattr(ipc1, "send", fake_send1)
-    handler = FolderEventHandler("10.0.0.1", [ipc0, ipc1])
+    handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(small)))
     assert len(sent) == 1
     assert sent[0] == (0, False, 1)
@@ -95,6 +110,9 @@ def test_handler_parallel_small_files_use_different_pairs(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         pairs.append(0)
 
@@ -104,12 +122,15 @@ def test_handler_parallel_small_files_use_different_pairs(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         pairs.append(1)
 
     monkeypatch.setattr(ipc0, "send", fake_send0)
     monkeypatch.setattr(ipc1, "send", fake_send1)
-    handler = FolderEventHandler("10.0.0.1", [ipc0, ipc1])
+    handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(a)))
     handler.on_any_event(FileCreatedEvent(src_path=str(b)))
     assert pairs == [0, 1]
@@ -131,21 +152,25 @@ def test_handler_sends_moved_src_and_dest(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         sent.append(coordinated)
 
     monkeypatch.setattr(ipc, "send", fake_send)
-    handler = FolderEventHandler("10.0.0.1", [ipc])
+    handler = _handler(tmp_path, [ipc])
     handler.on_any_event(
         FileMovedEvent(src_path=str(tmp_path / "a.txt"), dest_path=str(dest)),
     )
     assert sent == [False]
 
 
-def test_handler_ignores_directories(
+def test_handler_sends_directory_created(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    sent: list[bool] = []
+    calls: list[tuple[str, str, bool]] = []
     ipc = Ipc("/tmp/ignored.sock")
 
     def fake_send(
@@ -154,17 +179,107 @@ def test_handler_ignores_directories(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
-        sent.append(coordinated)
+        calls.append((command, relative_path, is_directory))
 
     monkeypatch.setattr(ipc, "send", fake_send)
-    handler = FolderEventHandler("10.0.0.1", [ipc])
-    handler.on_any_event(DirCreatedEvent(src_path="/tmp/folder/sub"))
-    assert sent == []
+    handler = _handler(tmp_path, [ipc])
+    handler.on_any_event(
+        DirCreatedEvent(src_path=str(tmp_path / "folder" / "sub")),
+    )
+    assert calls == [("created", "folder/sub", True)]
+
+
+def test_handler_sends_nested_file_relative_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    nested = tmp_path / "sub" / "file.txt"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"data")
+
+    calls: list[str] = []
+    ipc = Ipc("/tmp/ignored.sock")
+
+    def fake_send(
+        command: str,
+        data: bytes = b"",
+        target_ip: str = "",
+        object_id: int = 0,
+        coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
+        calls.append(relative_path)
+
+    monkeypatch.setattr(ipc, "send", fake_send)
+    handler = _handler(tmp_path, [ipc])
+    handler.on_any_event(FileCreatedEvent(src_path=str(nested)))
+    assert calls == ["sub/file.txt"]
+
+
+def test_handler_sends_directory_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, str, bool]] = []
+    ipc = Ipc("/tmp/ignored.sock")
+
+    def fake_send(
+        command: str,
+        data: bytes = b"",
+        target_ip: str = "",
+        object_id: int = 0,
+        coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
+        calls.append((command, relative_path, is_directory))
+
+    monkeypatch.setattr(ipc, "send", fake_send)
+    handler = _handler(tmp_path, [ipc])
+    handler.on_any_event(DirDeletedEvent(src_path=str(tmp_path / "gone")))
+    assert calls == [("deleted", "gone", True)]
+
+
+def test_handler_sends_directory_moved(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, str, str, bool]] = []
+    ipc = Ipc("/tmp/ignored.sock")
+
+    def fake_send(
+        command: str,
+        data: bytes = b"",
+        target_ip: str = "",
+        object_id: int = 0,
+        coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
+        calls.append((command, relative_path, dest_relative_path, is_directory))
+
+    monkeypatch.setattr(ipc, "send", fake_send)
+    handler = _handler(tmp_path, [ipc])
+    handler.on_any_event(
+        DirMovedEvent(
+            src_path=str(tmp_path / "old"),
+            dest_path=str(tmp_path / "new"),
+        ),
+    )
+    assert calls == [("moved", "old", "new", True)]
 
 
 def test_handler_ignores_closed_events(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     sent: list[bool] = []
     ipc = Ipc("/tmp/ignored.sock")
@@ -175,10 +290,13 @@ def test_handler_ignores_closed_events(
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> None:
         sent.append(coordinated)
 
     monkeypatch.setattr(ipc, "send", fake_send)
-    handler = FolderEventHandler("10.0.0.1", [ipc])
-    handler.on_any_event(FileClosedEvent(src_path="/tmp/folder/a.txt"))
+    handler = _handler(tmp_path, [ipc])
+    handler.on_any_event(FileClosedEvent(src_path=str(tmp_path / "a.txt")))
     assert sent == []

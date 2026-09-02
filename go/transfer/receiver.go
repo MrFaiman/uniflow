@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,13 +17,13 @@ type blockState struct {
 }
 
 type Receiver struct {
-	conn         *net.UDPConn
-	receiveDir   string
-	workerIndex  uint32
-	workerCount  uint32
-	objectMeta   map[uint64]*pb.FileDeliveryTable
-	blocks       map[uint64]map[uint32]*blockState
-	assembled    map[uint64]bool
+	conn        *net.UDPConn
+	receiveDir  string
+	workerIndex uint32
+	workerCount uint32
+	objectMeta  map[uint64]*pb.FileDeliveryTable
+	blocks      map[uint64]map[uint32]*blockState
+	assembled   map[uint64]bool
 }
 
 func NewReceiver(port int, receiveDir string) (*Receiver, error) {
@@ -68,7 +69,65 @@ func (r *Receiver) Run() error {
 			r.handleFDT(payload.Fdt)
 		case *pb.UdpDatagram_Data:
 			r.handleData(payload.Data)
+		case *pb.UdpDatagram_PathOp:
+			r.handlePathOperation(payload.PathOp)
 		}
+	}
+}
+
+func (r *Receiver) shouldApplyPathOps() bool {
+	if r.workerCount <= 1 {
+		return true
+	}
+	return r.workerIndex == 0
+}
+
+func (r *Receiver) handlePathOperation(op *pb.PathOperation) {
+	if op == nil || !r.shouldApplyPathOps() {
+		return
+	}
+
+	target, err := SafeJoin(r.receiveDir, op.RelativePath)
+	if err != nil {
+		slog.Error("invalid path operation", "op", op.Op.String(), "path", op.RelativePath, "err", err)
+		return
+	}
+
+	switch op.Op {
+	case pb.PathOperation_MKDIR:
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			slog.Error("mkdir failed", "path", target, "err", err)
+			return
+		}
+		slog.Info("mkdir", "path", target)
+	case pb.PathOperation_REMOVE:
+		if op.IsDirectory {
+			if err := os.RemoveAll(target); err != nil && !os.IsNotExist(err) {
+				slog.Error("remove dir failed", "path", target, "err", err)
+				return
+			}
+		} else if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			slog.Error("remove file failed", "path", target, "err", err)
+			return
+		}
+		slog.Info("removed", "path", target, "is_directory", op.IsDirectory)
+	case pb.PathOperation_RENAME:
+		dest, err := SafeJoin(r.receiveDir, op.DestRelativePath)
+		if err != nil {
+			slog.Error("invalid rename dest", "dest", op.DestRelativePath, "err", err)
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			slog.Error("rename mkdir failed", "path", filepath.Dir(dest), "err", err)
+			return
+		}
+		if err := os.Rename(target, dest); err != nil {
+			slog.Error("rename failed", "from", target, "to", dest, "err", err)
+			return
+		}
+		slog.Info("renamed", "from", target, "to", dest, "is_directory", op.IsDirectory)
+	default:
+		slog.Warn("unknown path operation", "op", op.Op.String())
 	}
 }
 
@@ -193,50 +252,90 @@ func (r *Receiver) tryAssemble(objectID uint64, coordinated bool) {
 		sourceBlocks = 1
 	}
 
-	staging := r.stagingDir(objectID)
-	for i := uint32(0); i < sourceBlocks; i++ {
-		path := r.blockStagingPath(objectID, i)
-		if _, err := os.Stat(path); err != nil {
-			return
-		}
-	}
-
 	plan := FilePlan{
 		SourceBlocks:   sourceBlocks,
 		SymbolSize:     fdt.FecParams.GetSymbolSize(),
 		OriginalLength: int(fdt.FileSize),
 	}
-	parts := make([][]byte, 0, sourceBlocks)
-	for i := uint32(0); i < sourceBlocks; i++ {
-		path := r.blockStagingPath(objectID, i)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			slog.Error("read staging block failed", "path", path, "err", err)
-			return
+
+	var full []byte
+	staging := r.stagingDir(objectID)
+
+	if plan.OriginalLength == 0 {
+		full = []byte{}
+	} else {
+		for i := uint32(0); i < sourceBlocks; i++ {
+			path := r.blockStagingPath(objectID, i)
+			if _, err := os.Stat(path); err != nil {
+				return
+			}
 		}
-		want := BlockByteLength(plan, i)
-		if len(data) > want {
-			data = data[:want]
+
+		parts := make([][]byte, 0, sourceBlocks)
+		for i := uint32(0); i < sourceBlocks; i++ {
+			path := r.blockStagingPath(objectID, i)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				slog.Error("read staging block failed", "path", path, "err", err)
+				return
+			}
+			want := BlockByteLength(plan, i)
+			if len(data) > want {
+				data = data[:want]
+			}
+			parts = append(parts, data)
 		}
-		parts = append(parts, data)
+
+		full = make([]byte, 0, plan.OriginalLength)
+		for _, part := range parts {
+			full = append(full, part...)
+		}
+		if len(full) > plan.OriginalLength {
+			full = full[:plan.OriginalLength]
+		}
 	}
 
-	full := make([]byte, 0, plan.OriginalLength)
-	for _, part := range parts {
-		full = append(full, part...)
+	if len(fdt.Checksum) != sha256Size {
+		slog.Error(
+			"checksum missing or invalid",
+			"object", objectID,
+			"file", fdt.FileName,
+			"checksum_len", len(fdt.Checksum),
+		)
+		r.assembled[objectID] = true
+		return
 	}
-	if len(full) > plan.OriginalLength {
-		full = full[:plan.OriginalLength]
+	if !checksumMatches(full, fdt.Checksum) {
+		slog.Error(
+			"checksum mismatch",
+			"object", objectID,
+			"file", fdt.FileName,
+			"expected", hex.EncodeToString(fdt.Checksum),
+			"got", hex.EncodeToString(FileChecksum(full)),
+		)
+		r.assembled[objectID] = true
+		return
 	}
 
-	outPath := filepath.Join(r.receiveDir, fdt.FileName)
+	outPath, err := SafeJoin(r.receiveDir, fdt.FileName)
+	if err != nil {
+		slog.Error("invalid output path", "file", fdt.FileName, "err", err)
+		r.assembled[objectID] = true
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		slog.Error("mkdir failed", "path", filepath.Dir(outPath), "err", err)
+		return
+	}
 	if err := os.WriteFile(outPath, full, 0o644); err != nil {
 		slog.Error("write file failed", "path", outPath, "err", err)
 		return
 	}
 	r.assembled[objectID] = true
-	if err := os.RemoveAll(staging); err != nil {
-		slog.Warn("staging cleanup failed", "path", staging, "err", err)
+	if plan.OriginalLength > 0 {
+		if err := os.RemoveAll(staging); err != nil {
+			slog.Warn("staging cleanup failed", "path", staging, "err", err)
+		}
 	}
 	delete(r.objectMeta, objectID)
 	delete(r.blocks, objectID)

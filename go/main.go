@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/akamensky/argparse"
 
 	"github.com/MrFaiman/uniflow/transfer"
 )
@@ -12,22 +15,22 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
-	if len(os.Args) < 2 {
-		slog.Error("usage: uniflow send | recv [dir]")
+	parser := argparse.NewParser("uniflow", "unidirectional file transfer")
+	sendCmd := parser.NewCommand("send", "send files")
+	recvCmd := parser.NewCommand("recv", "receive files")
+	recvDir := recvCmd.StringPositional(&argparse.Options{
+		Help: "directory for received files",
+	})
+
+	if err := parser.Parse(os.Args); err != nil {
+		fmt.Fprint(os.Stderr, parser.Usage(err))
 		os.Exit(1)
 	}
 
-	switch os.Args[1] {
-	case "send":
+	switch {
+	case sendCmd.Happened():
 		transfer.RunSend()
-	case "recv":
-		dir := ""
-		if len(os.Args) >= 3 {
-			dir = os.Args[2]
-		}
-		transfer.RunRecv(dir)
-	default:
-		slog.Error("unknown command", "cmd", os.Args[1])
-		os.Exit(1)
+	case recvCmd.Happened():
+		transfer.RunRecv(*recvDir)
 	}
 }

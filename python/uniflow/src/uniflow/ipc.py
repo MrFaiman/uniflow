@@ -21,6 +21,9 @@ class Ipc:
         target_ip: str = "",
         object_id: int = 0,
         coordinated: bool = True,
+        relative_path: str = "",
+        dest_relative_path: str = "",
+        is_directory: bool = False,
     ) -> message_pb2.IPCResponse:
         request = message_pb2.IPCRequest(
             command=command,
@@ -28,6 +31,9 @@ class Ipc:
             target_ip=target_ip,
             object_id=object_id,
             coordinated=coordinated,
+            relative_path=relative_path,
+            dest_relative_path=dest_relative_path,
+            is_directory=is_directory,
         )
         logger.info("connecting to %s", self.path)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:

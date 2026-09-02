@@ -16,11 +16,18 @@ from uniflow.transfer import (
 logger = logging.getLogger(__name__)
 
 _WATCHED_EVENTS = frozenset({"created", "modified", "deleted", "moved"})
+_METADATA_EVENTS = frozenset({"deleted", "moved"})
 
 
 class FolderEventHandler(FileSystemEventHandler):
-    def __init__(self, target_ip: str, ipc_clients: list[Ipc]) -> None:
+    def __init__(
+        self,
+        watch_root: Path,
+        target_ip: str,
+        ipc_clients: list[Ipc],
+    ) -> None:
         super().__init__()
+        self.watch_root = watch_root.resolve()
         self.target_ip = target_ip
         self._ipc_clients = ipc_clients
         self._object_id = 0
@@ -30,7 +37,18 @@ class FolderEventHandler(FileSystemEventHandler):
         self._object_id += 1
         return self._object_id
 
-    def _send_coordinated(self, command: str, data: bytes) -> None:
+    def _relative_path(self, abs_path: str) -> str:
+        return Path(abs_path).resolve().relative_to(self.watch_root).as_posix()
+
+    def _send_coordinated(
+        self,
+        command: str,
+        data: bytes,
+        *,
+        relative_path: str,
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
         object_id = self._next_object_id()
         for ipc in self._ipc_clients:
             ipc.send(
@@ -39,9 +57,20 @@ class FolderEventHandler(FileSystemEventHandler):
                 target_ip=self.target_ip,
                 object_id=object_id,
                 coordinated=True,
+                relative_path=relative_path,
+                dest_relative_path=dest_relative_path,
+                is_directory=is_directory,
             )
 
-    def _send_single_pair(self, command: str, data: bytes) -> None:
+    def _send_single_pair(
+        self,
+        command: str,
+        data: bytes,
+        *,
+        relative_path: str,
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
         pair = self._pair_pool.acquire()
         object_id = self._next_object_id()
         try:
@@ -56,17 +85,26 @@ class FolderEventHandler(FileSystemEventHandler):
                 target_ip=self.target_ip,
                 object_id=object_id,
                 coordinated=False,
+                relative_path=relative_path,
+                dest_relative_path=dest_relative_path,
+                is_directory=is_directory,
             )
         finally:
             self._pair_pool.release(pair)
 
     def on_any_event(self, event: FileSystemEvent) -> None:
-        if event.is_directory or event.event_type not in _WATCHED_EVENTS:
+        if event.event_type not in _WATCHED_EVENTS:
             return
+        if event.is_directory and event.event_type == "modified":
+            return
+
         src = os.fsdecode(event.src_path)
+        relative_path = self._relative_path(src)
+        dest_relative_path = ""
         if event.event_type == "moved":
             dest = os.fsdecode(event.dest_path)
             path = f"{src}\n{dest}"
+            dest_relative_path = self._relative_path(dest)
         else:
             path = src
         logger.info(
@@ -77,9 +115,15 @@ class FolderEventHandler(FileSystemEventHandler):
         )
         data = path.encode()
         command = event.event_type
+        is_directory = event.is_directory
+        path_kwargs = {
+            "relative_path": relative_path,
+            "dest_relative_path": dest_relative_path,
+            "is_directory": is_directory,
+        }
 
-        if command == "deleted":
-            self._send_single_pair(command, data)
+        if command in _METADATA_EVENTS or is_directory:
+            self._send_single_pair(command, data, **path_kwargs)
             return
 
         size = file_size_for_event(path, command)
@@ -94,14 +138,14 @@ class FolderEventHandler(FileSystemEventHandler):
             return
 
         if mode == "single_pair":
-            self._send_single_pair(command, data)
+            self._send_single_pair(command, data, **path_kwargs)
         else:
             logger.info(
                 "coordinated transfer size=%d object threshold=%d",
                 size,
                 10 * 1024 * 1024,
             )
-            self._send_coordinated(command, data)
+            self._send_coordinated(command, data, **path_kwargs)
 
 
 def _make_observer() -> Observer:
@@ -116,11 +160,12 @@ def watch_folder(
     target_ip: str,
     ipc_clients: list[Ipc],
 ) -> None:
-    handler = FolderEventHandler(target_ip, ipc_clients)
+    watch_root = folder.expanduser().resolve()
+    handler = FolderEventHandler(watch_root, target_ip, ipc_clients)
     observer = _make_observer()
-    observer.schedule(handler, str(folder), recursive=True)
+    observer.schedule(handler, str(watch_root), recursive=True)
     observer.start()
-    logger.info("watching %s target_ip=%s", folder, target_ip)
+    logger.info("watching %s target_ip=%s", watch_root, target_ip)
     try:
         while observer.is_alive():
             observer.join(timeout=0.5)

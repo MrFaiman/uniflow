@@ -9,6 +9,9 @@ message IPCRequest {
   string target_ip = 3;
   uint64 object_id = 4;
   bool coordinated = 5;
+  string relative_path = 6;
+  string dest_relative_path = 7;
+  bool is_directory = 8;
 }
 
 message IPCResponse {

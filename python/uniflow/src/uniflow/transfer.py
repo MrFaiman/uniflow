@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -6,7 +7,17 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SMALL_FILE_MAX_BYTES = 10 * 1024 * 1024
-LARGE_FILE_MAX_BYTES = 1 * 1024 * 1024 * 1024
+_DEFAULT_LARGE_FILE_MAX_BYTES = 1 * 1024 * 1024 * 1024
+LARGE_FILE_MAX_BYTES = _DEFAULT_LARGE_FILE_MAX_BYTES
+
+
+def large_file_max_bytes() -> int:
+    return int(
+        os.environ.get(
+            "UNIFLOW_MAX_FILE_BYTES",
+            str(_DEFAULT_LARGE_FILE_MAX_BYTES),
+        ),
+    )
 
 
 class PairPool:
@@ -41,9 +52,10 @@ def file_size_for_event(path_text: str, event_type: str) -> int | None:
 
 
 def transfer_mode_for_size(size: int) -> str:
-    if size > LARGE_FILE_MAX_BYTES:
+    max_bytes = large_file_max_bytes()
+    if size > max_bytes:
         raise ValueError(
-            f"file size {size} exceeds maximum {LARGE_FILE_MAX_BYTES} bytes",
+            f"file size {size} exceeds maximum {max_bytes} bytes",
         )
     if size < SMALL_FILE_MAX_BYTES:
         return "single_pair"

@@ -25,6 +25,7 @@ message FileDeliveryTable {
 
   RaptorQParameters fec_params = 6;
   bool coordinated = 7;  // true: split across worker team; false: single sender/receiver pair
+  bytes checksum = 8;    // SHA-256 of the original file bytes
 }
 
 // ---------------------------------------------------------
@@ -43,12 +44,31 @@ message FluteDataPacket {
 }
 
 // ---------------------------------------------------------
-// 3. The UDP Wrapper
+// 3. Path operations (mkdir, delete, rename)
+// ---------------------------------------------------------
+message PathOperation {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    MKDIR = 1;
+    REMOVE = 2;
+    RENAME = 3;
+  }
+
+  uint64 session_id = 1;
+  Op op = 2;
+  string relative_path = 3;
+  string dest_relative_path = 4;
+  bool is_directory = 5;
+}
+
+// ---------------------------------------------------------
+// 4. The UDP Wrapper
 // Since UDP doesn't guarantee order, we wrap both in one message
 // ---------------------------------------------------------
 message UdpDatagram {
   oneof payload {
     FileDeliveryTable fdt = 1;
     FluteDataPacket data = 2;
+    PathOperation path_op = 3;
   }
 }
