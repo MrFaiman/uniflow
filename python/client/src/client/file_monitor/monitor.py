@@ -4,10 +4,14 @@ from client.common.round_robin import round_robin
 
 
 class FileMonitor:
-    def __init__(self, watch_folder: Path):
+    def __init__(
+        self,
+        watch_folder: Path,
+        number_of_senders: int = 3,
+    ):
         self.watch_folder = watch_folder
         self.known_files = {}
-        self.round_robin = round_robin(3)
+        self.round_robin = round_robin(number_of_senders)
 
     def get_files(self) -> list[Path]:
         files = []

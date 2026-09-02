@@ -9,8 +9,9 @@ from client.file_monitor.raptorq_encoder import encode_file
 
 def transfer_file(
     file: Path,
-    connections: list[socket.socket],
+    connection: socket.socket,
     small_file_sender: int,
+    number_of_senders: int = 3,
 ) -> None:
     packets = encode_file(file)
 
@@ -18,18 +19,13 @@ def transfer_file(
         packets,
         file.stat().st_size,
         small_file_sender,
+        number_of_senders,
     )
 
     for sender, packet in routed_packets:
         packet.target_receiver = sender
-
-        packet.packet_hash = calculate_packet_hash(
-            packet
-        )
+        packet.packet_hash = calculate_packet_hash(packet)
 
         data = packet.SerializeToString()
 
-        send_message(
-            connections[sender],
-            data,
-        )
+        send_message(connection, data)

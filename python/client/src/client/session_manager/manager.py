@@ -11,16 +11,22 @@ from client.transfer_pb2 import FilePacket
 
 
 class SessionManager:
-    def __init__(self, output_folder: Path):
+    def __init__(
+        self,
+        output_folder: Path,
+    ):
         self.output_folder = output_folder
-        self.output_folder.mkdir(parents=True, exist_ok=True)
+
+        self.output_folder.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
         self.sessions = {}
         self.finished_sessions = set()
 
     def handle_serialized_packet(
         self,
-        receiver_id: int,
         data: bytes,
     ) -> None:
         packet = FilePacket()
@@ -31,25 +37,20 @@ class SessionManager:
             print("Invalid Protobuf packet")
             return
 
-        self.handle_packet(receiver_id, packet)
+        self.handle_packet(packet)
 
     def handle_packet(
         self,
-        receiver_id: int,
         packet: FilePacket,
     ) -> None:
         if not packet_is_valid(packet):
-            print("Invalid or corrupted packet")
+            print(
+                "Invalid or corrupted packet"
+            )
             return
 
         if packet.file_id in self.finished_sessions:
             return
-
-        if packet.target_receiver != receiver_id:
-            print(
-                f"Misrouted: expected Receiver "
-                f"{packet.target_receiver}, got {receiver_id}"
-            )
 
         session = self._get_session(packet)
         block = packet.block_index
@@ -57,15 +58,25 @@ class SessionManager:
         if block in session.completed_blocks:
             return
 
-        if session.packet_was_seen(block, packet.packet_index):
+        if session.packet_was_seen(
+            block,
+            packet.packet_index,
+        ):
             return
 
-        decoded = decode_packet(session, packet)
+        decoded = decode_packet(
+            session,
+            packet,
+        )
 
         if decoded is None:
             return
 
-        session.write_block(packet.block_offset, decoded)
+        session.write_block(
+            packet.block_offset,
+            decoded,
+        )
+
         session.finish_block(block)
 
         print(
@@ -81,15 +92,26 @@ class SessionManager:
         self,
         packet: FilePacket,
     ) -> FileSession:
-        session = self.sessions.get(packet.file_id)
+        session = self.sessions.get(
+            packet.file_id
+        )
 
         if session is not None:
             return session
 
-        session = FileSession(packet, self.output_folder)
-        self.sessions[packet.file_id] = session
+        session = FileSession(
+            packet,
+            self.output_folder,
+        )
 
-        print(f"Started receiving {session.file_name}")
+        self.sessions[
+            packet.file_id
+        ] = session
+
+        print(
+            f"Started receiving "
+            f"{session.file_name}"
+        )
 
         return session
 
@@ -97,7 +119,9 @@ class SessionManager:
         self,
         session: FileSession,
     ) -> None:
-        received_hash = calculate_sha256(session.part_path)
+        received_hash = calculate_sha256(
+            session.part_path
+        )
 
         if received_hash == session.file_hash:
             os.replace(
@@ -106,15 +130,26 @@ class SessionManager:
             )
 
             print(
-                f"COMPLETE: {session.file_name} - HASH OK"
+                f"COMPLETE: "
+                f"{session.file_name} "
+                f"- HASH OK"
             )
+
         else:
-            session.part_path.unlink(missing_ok=True)
+            session.part_path.unlink(
+                missing_ok=True
+            )
 
             print(
-                f"FAILED: {session.file_name} "
+                f"FAILED: "
+                f"{session.file_name} "
                 f"- HASH MISMATCH"
             )
 
-        self.finished_sessions.add(session.file_id)
-        del self.sessions[session.file_id]
+        self.finished_sessions.add(
+            session.file_id
+        )
+
+        del self.sessions[
+            session.file_id
+        ]
