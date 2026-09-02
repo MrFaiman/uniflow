@@ -174,3 +174,22 @@ def watch_folder(
     finally:
         observer.stop()
         observer.join()
+
+if __name__ == "__main__":
+    import sys
+    
+    logging.basicConfig(level=logging.INFO)
+    
+    # הגדרת נתיבים וכתובות יעד מתוך הארגומנטים
+    folder_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/data/out")
+    target = sys.argv[2] if len(sys.argv) > 2 else "router"
+    
+    # שאיבת מספר הוורקרים ממשתני הסביבה (כברירת מחדל 3)
+    workers = int(os.environ.get("UNIFLOW_WORKERS", "3"))
+    
+    logger.info("Initializing %d IPC clients...", workers)
+    # יצירת מופעי ה-IPC הדרושים לארכיטקטורת ה-PairPool
+    ipc_clients = [Ipc() for _ in range(workers)]
+    
+    logger.info("Starting watch_folder on %s with target %s", folder_path, target)
+    watch_folder(folder_path, target, ipc_clients)
