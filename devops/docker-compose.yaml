@@ -22,11 +22,7 @@ services:
       context: ..
       dockerfile: devops/uniflow.Dockerfile
     hostname: rx_machine
-<<<<<<< HEAD
     command: [ "recv", "/data/in", "router" ]
-=======
-    command: [ "receive", "/data/in", "router" ]
->>>>>>> yair
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
