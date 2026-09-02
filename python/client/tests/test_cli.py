@@ -15,23 +15,23 @@ def test_send_command():
 
     assert args.command == "send"
     assert args.folder == Path("/data/out")
-    assert args.router is None
+    assert args.target_ip is None
 
 
-def test_send_command_with_router():
+def test_send_command_with_target_ip():
     parser = create_parser()
 
     args = parser.parse_args(
         [
             "send",
             "/data/out",
-            "router",
+            "127.0.0.1",
         ]
     )
 
     assert args.command == "send"
     assert args.folder == Path("/data/out")
-    assert args.router == "router"
+    assert args.target_ip == "127.0.0.1"
 
 
 def test_receive_command():

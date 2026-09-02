@@ -12,6 +12,9 @@
 *.out
 coverage.out
 
+# Generated protobuf (see generate.go / CI)
+/pb/
+
 # Editor / OS
 .vscode/
 .idea/

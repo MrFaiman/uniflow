@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package uniflow;
+
+message WireShard {
+    uint64 frame_id = 1;
+    uint32 worker_index = 2;
+    uint32 shard_index = 3;
+    uint32 data_shards = 4;
+    uint32 parity_shards = 5;
+    uint32 payload_size = 6;
+    bytes shard = 7;
+    uint32 checksum = 8;
+}

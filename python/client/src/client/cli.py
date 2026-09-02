@@ -28,9 +28,9 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     send_parser.add_argument(
-        "router",
+        "target_ip",
         nargs="?",
-        help="Router hostname for future Sender integration",
+        help="Destination IP address",
     )
 
     receive_parser = commands.add_parser(
@@ -52,7 +52,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "send":
-        run_file_monitor(args.folder)
+        run_file_monitor(args.folder, args.target_ip)
 
     elif args.command == "receive":
         run_session_manager(args.folder)

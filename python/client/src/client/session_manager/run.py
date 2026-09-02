@@ -3,6 +3,7 @@ from queue import Queue
 from threading import Thread
 
 from client.common.config import get_socket_path
+from client.common.go_daemon import run_go_daemon, wait_for_socket
 from client.session_manager.listener import (
     listen_to_receivers,
 )
@@ -45,12 +46,18 @@ def run_session_manager(
 
     listener_thread.start()
 
+    socket_path = get_socket_path()
+    wait_for_socket(socket_path)
+
     print(
         f"Receiving files into: "
         f"{output_folder}"
     )
 
-    process_messages(
-        manager,
-        messages,
-    )
+    recv_args = ["receive", str(output_folder)]
+
+    with run_go_daemon(*recv_args):
+        process_messages(
+            manager,
+            messages,
+        )
