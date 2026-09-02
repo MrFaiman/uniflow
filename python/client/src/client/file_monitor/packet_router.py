@@ -14,5 +14,8 @@ def route_packets(
         return
 
     for index, packet in enumerate(packets):
-        sender = index % number_of_senders
+        sender = (
+            index % number_of_senders
+        )
+
         yield sender, packet

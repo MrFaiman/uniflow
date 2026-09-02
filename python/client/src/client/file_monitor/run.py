@@ -1,64 +1,15 @@
-import os
 import socket
 import time
 from pathlib import Path
 
+from client.common.config import (
+    get_poll_interval,
+    get_socket_path,
+    get_worker_count,
+)
 from client.common.ipc import connect_to_server
 from client.file_monitor.monitor import FileMonitor
 from client.file_monitor.transfer import transfer_file
-
-DEFAULT_SOCKET_PATH = "/tmp/proto_ipc.sock"
-DEFAULT_WATCH_DIR = "/data/out"
-
-
-def get_socket_path() -> Path:
-    return Path(
-        os.getenv(
-            "IPC_SOCKET_PATH",
-            DEFAULT_SOCKET_PATH,
-        )
-    )
-
-
-def get_watch_folder() -> Path:
-    return Path(
-        os.getenv(
-            "UNIFLOW_WATCH_DIR",
-            DEFAULT_WATCH_DIR,
-        )
-    )
-
-
-def get_worker_count() -> int:
-    workers = int(
-        os.getenv(
-            "UNIFLOW_WORKERS",
-            "3",
-        )
-    )
-
-    if workers < 1:
-        raise ValueError(
-            "UNIFLOW_WORKERS must be at least 1"
-        )
-
-    return workers
-
-
-def get_poll_interval() -> float:
-    polling = float(
-        os.getenv(
-            "UNIFLOW_WATCH_POLLING",
-            "1",
-        )
-    )
-
-    if polling <= 0:
-        raise ValueError(
-            "UNIFLOW_WATCH_POLLING must be greater than 0"
-        )
-
-    return polling
 
 
 def connect_to_sender(
@@ -67,17 +18,19 @@ def connect_to_sender(
     while True:
         try:
             return connect_to_server(socket_path)
+
         except (
             FileNotFoundError,
             ConnectionRefusedError,
         ):
-            time.sleep(0.5)
+            print("Waiting for Sender...")
+            time.sleep(1)
 
 
-def run_monitor(
+def monitor_files(
     monitor: FileMonitor,
     connection: socket.socket,
-    number_of_senders: int,
+    workers: int,
     poll_interval: float,
 ) -> None:
     while True:
@@ -90,14 +43,15 @@ def run_monitor(
                 file,
                 connection,
                 sender,
-                number_of_senders,
+                workers,
             )
 
         time.sleep(poll_interval)
 
 
-def main() -> None:
-    watch_folder = get_watch_folder()
+def run_file_monitor(
+    watch_folder: Path,
+) -> None:
     watch_folder.mkdir(
         parents=True,
         exist_ok=True,
@@ -111,7 +65,7 @@ def main() -> None:
     )
 
     print(
-        f"File Monitor watching {watch_folder}"
+        f"Watching folder: {watch_folder}"
     )
 
     connection = connect_to_sender(
@@ -119,15 +73,12 @@ def main() -> None:
     )
 
     try:
-        run_monitor(
+        monitor_files(
             monitor,
             connection,
             workers,
             get_poll_interval(),
         )
+
     finally:
         connection.close()
-
-
-if __name__ == "__main__":
-    main()

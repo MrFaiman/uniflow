@@ -3,6 +3,7 @@ def round_robin(number_of_senders: int):
 
     while True:
         yield current_sender
+
         current_sender = (
             current_sender + 1
         ) % number_of_senders

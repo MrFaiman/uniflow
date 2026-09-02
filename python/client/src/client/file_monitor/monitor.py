@@ -11,7 +11,9 @@ class FileMonitor:
     ):
         self.watch_folder = watch_folder
         self.known_files = {}
-        self.round_robin = round_robin(number_of_senders)
+        self.round_robin = round_robin(
+            number_of_senders
+        )
 
     def get_files(self) -> list[Path]:
         files = []
@@ -26,15 +28,20 @@ class FileMonitor:
         changed_files = []
 
         for file in self.get_files():
-            modified_time = file.stat().st_mtime_ns
+            modified_time = (
+                file.stat().st_mtime_ns
+            )
 
             if (
                 file not in self.known_files
-                or self.known_files[file] != modified_time
+                or self.known_files[file]
+                != modified_time
             ):
                 changed_files.append(file)
 
-            self.known_files[file] = modified_time
+            self.known_files[file] = (
+                modified_time
+            )
 
         return changed_files
 
