@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+<<<<<<< HEAD
 
 from config import (  # noqa: E402
     ROUTER_IP,
@@ -21,6 +22,18 @@ from config import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+=======
+from config import (  # noqa: E402
+    ROUTER_IP,
+    RX_HOST,
+    RX_PORT_LIST,
+    STATS_INTERVAL_SEC,
+    DisruptionProbabilities,
+)
+
+logger = logging.getLogger(__name__)
+
+>>>>>>> yair
 @dataclass
 class PortStats:
     received: int = 0
@@ -29,7 +42,10 @@ class PortStats:
     misroute_in: int = 0
     misroute_out: int = 0
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 @dataclass
 class RouterStats:
     received: int = 0
@@ -46,13 +62,19 @@ class RouterStats:
             self.by_port[port] = PortStats()
         return self.by_port[port]
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 def _pct(count: int, total: int) -> str:
     if total == 0:
         return "0.0%"
     return f"{(count / total) * 100:.1f}%"
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 def log_stats(stats: RouterStats) -> None:
     logger.info(
         "[stats] received=%d dropped=%d (%s) bit_flipped=%d (%s) "
@@ -81,7 +103,10 @@ def log_stats(stats: RouterStats) -> None:
             port_stats.misroute_out,
         )
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 def apply_bit_flip(data: bytes) -> tuple[bytes, int, int]:
     if not data:
         return data, 0, 0
@@ -91,14 +116,20 @@ def apply_bit_flip(data: bytes) -> tuple[bytes, int, int]:
     data_bytearray[byte_index] ^= 1 << bit_index
     return bytes(data_bytearray), byte_index, bit_index
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 def start_router() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
         stream=sys.stdout,
     )
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
     listening_sockets: dict[socket.socket, int] = {}
     for port in RX_PORT_LIST:
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -151,12 +182,19 @@ def start_router() -> None:
             data, addr = sock.recvfrom(65535)
             intended_port = listening_sockets[sock]
             packet_size = len(data)
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
             stats.received += 1
             stats.bytes_in += packet_size
             port_stats = stats.port_stats(intended_port)
             port_stats.received += 1
+<<<<<<< HEAD
 
+=======
+            
+>>>>>>> yair
             logger.info(
                 "received size=%d src=%s intended_port=%d",
                 packet_size,
@@ -223,7 +261,10 @@ def start_router() -> None:
             )
 
     log_stats(stats)
+<<<<<<< HEAD
 
+=======
+>>>>>>> yair
 
 if __name__ == "__main__":
     start_router()
