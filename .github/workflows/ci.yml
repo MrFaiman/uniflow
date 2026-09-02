@@ -7,6 +7,38 @@ on:
   pull_request:
 
 jobs:
+  go-lint:
+    name: Go lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc-gen-go
+        working-directory: ./go
+        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
+
+      - name: Generate protobuf
+        run: bash scripts/generate-proto.sh go
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.13.2
+          working-directory: go
+
   go-tests:
     name: Go tests
     runs-on: ubuntu-latest
@@ -20,9 +52,23 @@ jobs:
         with:
           go-version-file: go/go.mod
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc-gen-go
+        working-directory: ./go
+        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
+
+      - name: Generate protobuf
+        working-directory: ./go
+        run: go test ./scripts
+
       - name: Run Go tests
         working-directory: ./go
-        run: go test ./...
+        run: go test ./transfer ./tests ./scripts
 
   python-tests:
     name: Python tests
@@ -42,16 +88,21 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Python dependencies
-        working-directory: ./python/client
-        run: uv sync --dev
+        working-directory: ./python/uniflow
+        run: uv sync --all-groups
+
+      - name: Generate protobuf
+        run: bash scripts/generate-proto.sh python
 
       - name: Run Python lint and tests
-        working-directory: ./python/client
+        working-directory: ./python/uniflow
         run: |
           uv run ruff check .
-          if find . -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
-            uv run pytest
-          else
-            echo "No Python tests found; skipping pytest."
-          fi
+          uv run pytest

@@ -1,0 +1,6 @@
+.env
+__pycache__/
+devops/data/in/*
+devops/data/out/*
+!devops/data/in/.gitkeep
+!devops/data/out/.gitkeep

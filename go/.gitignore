@@ -1,5 +1,7 @@
 # Go
 /bin/
+/.bin/
+/pb/
 /build/
 /out/
 /vendor/

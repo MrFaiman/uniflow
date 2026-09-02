@@ -1,0 +1,12 @@
+.git
+.github
+.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+go/.bin
+devops/data/in/*
+devops/data/out/*
+!devops/data/in/.gitkeep
+!devops/data/out/.gitkeep
