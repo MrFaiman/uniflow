@@ -1,48 +1,29 @@
 from pathlib import Path
 
+import pytest
+
 from client.cli import create_parser
 
 
-def test_send_command():
+def test_send_command_requires_router():
     parser = create_parser()
 
-    args = parser.parse_args(
-        [
-            "send",
-            "/data/out",
-        ]
-    )
+    with pytest.raises(SystemExit):
+        parser.parse_args(["send", "/data/out"])
+
+
+def test_send_command_with_router():
+    parser = create_parser()
+    args = parser.parse_args(["send", "/data/out", "router"])
 
     assert args.command == "send"
     assert args.folder == Path("/data/out")
-    assert args.target_ip is None
-
-
-def test_send_command_with_target_ip():
-    parser = create_parser()
-
-    args = parser.parse_args(
-        [
-            "send",
-            "/data/out",
-            "127.0.0.1",
-        ]
-    )
-
-    assert args.command == "send"
-    assert args.folder == Path("/data/out")
-    assert args.target_ip == "127.0.0.1"
+    assert args.router == "router"
 
 
 def test_receive_command():
     parser = create_parser()
-
-    args = parser.parse_args(
-        [
-            "receive",
-            "/data/in",
-        ]
-    )
+    args = parser.parse_args(["receive", "/data/in"])
 
     assert args.command == "receive"
     assert args.folder == Path("/data/in")

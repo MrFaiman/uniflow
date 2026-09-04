@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+cpp/build/
+cpp/generated/
+devops/data/in/*
+devops/data/out/*
+!devops/data/in/.gitkeep
+!devops/data/out/.gitkeep

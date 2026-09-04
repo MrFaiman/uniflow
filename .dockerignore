@@ -1,0 +1,16 @@
+.git
+.github
+.env
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+cpp/build
+cpp/generated
+go/
+python/uniflow/
+schemas/
+devops/data/in/*
+devops/data/out/*
+!devops/data/in/.gitkeep
+!devops/data/out/.gitkeep

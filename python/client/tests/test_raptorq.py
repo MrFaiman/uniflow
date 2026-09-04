@@ -9,20 +9,13 @@ def test_raptorq_with_packet_loss(tmp_path):
     file.write_bytes(original_data)
 
     packets = list(encode_file(file))
-
-    # Simulate losing two packets
     packets = packets[2:]
 
-    decoder = Decoder.with_defaults(
-        packets[0].block_size,
-        SYMBOL_SIZE,
-    )
-
+    decoder = Decoder.with_defaults(packets[0].block_size, SYMBOL_SIZE)
     decoded_data = None
 
     for packet in packets:
         decoded_data = decoder.decode(packet.data)
-
         if decoded_data is not None:
             break
 

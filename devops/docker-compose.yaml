@@ -1,0 +1,65 @@
+services:
+  router:
+    build:
+      context: .
+      dockerfile: router/Dockerfile
+    environment:
+      PORT: "9000"
+      UNIFLOW_WORKERS: "3"
+      PACKET_LOSS: "${PACKET_LOSS:-0.03}"
+      BIT_FLIP: "${BIT_FLIP:-0.03}"
+      MISROUTING: "${MISROUTING:-0.03}"
+      STATS_INTERVAL_SEC: "${STATS_INTERVAL_SEC:-10}"
+      LOG_PACKETS: "${LOG_PACKETS:-0}"
+      RANDOM_SEED: "${RANDOM_SEED:-1337}"
+    networks:
+      - uniflow_net
+    depends_on:
+      - rx_machine
+
+  rx_machine:
+    build:
+      context: ..
+      dockerfile: devops/uniflow.Dockerfile
+    hostname: rx_machine
+    command: ["receive", "/data/in"]
+    environment:
+      PORT: "9000"
+      UNIFLOW_WORKERS: "3"
+      IPC_SOCKET_PATH: /tmp/proto_ipc.sock
+      UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
+      RECEIVE_DIR: /data/in
+    volumes:
+      - ./data/in:/data/in
+    networks:
+      - uniflow_net
+    expose:
+      - "9000/udp"
+      - "9001/udp"
+      - "9002/udp"
+
+  tx_machine:
+    build:
+      context: ..
+      dockerfile: devops/uniflow.Dockerfile
+    command: ["send", "/data/out", "router"]
+    environment:
+      PORT: "9000"
+      UNIFLOW_WORKERS: "3"
+      IPC_SOCKET_PATH: /tmp/proto_ipc.sock
+      UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
+      UNIFLOW_WATCH_POLLING: "1.0"
+      UNIFLOW_MAX_FILE_BYTES: "1073741824"
+      UNIFLOW_FEC_REPAIR_PERCENT: "${UNIFLOW_FEC_REPAIR_PERCENT:-20}"
+      UNIFLOW_SEND_RATE_MBPS: "${UNIFLOW_SEND_RATE_MBPS:-10}"
+    volumes:
+      - ./data/out:/data/out
+    networks:
+      - uniflow_net
+    depends_on:
+      - router
+      - rx_machine
+
+networks:
+  uniflow_net:
+    driver: bridge

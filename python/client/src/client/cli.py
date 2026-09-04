@@ -1,4 +1,5 @@
 import argparse
+import signal
 from pathlib import Path
 
 from client.file_monitor.run import run_file_monitor
@@ -8,53 +9,31 @@ from client.session_manager.run import run_session_manager
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="uniflow",
-        description="Uniflow file transfer system",
+        description="Reliable one-way file transfer",
     )
+    commands = parser.add_subparsers(dest="command", required=True)
 
-    commands = parser.add_subparsers(
-        dest="command",
-        required=True,
-    )
+    send = commands.add_parser("send", help="Run the TX File Monitor")
+    send.add_argument("folder", type=Path, help="Folder to monitor")
+    send.add_argument("router", help="Router hostname or IP")
 
-    send_parser = commands.add_parser(
-        "send",
-        help="Run the TX File Monitor",
-    )
-
-    send_parser.add_argument(
-        "folder",
-        type=Path,
-        help="Folder to monitor for files",
-    )
-
-    send_parser.add_argument(
-        "target_ip",
-        nargs="?",
-        help="Destination IP address",
-    )
-
-    receive_parser = commands.add_parser(
-        "receive",
-        help="Run the RX Session Manager",
-    )
-
-    receive_parser.add_argument(
-        "folder",
-        type=Path,
-        help="Folder where received files are saved",
-    )
+    receive = commands.add_parser("receive", help="Run the RX Session Manager")
+    receive.add_argument("folder", type=Path, help="Folder for reconstructed files")
 
     return parser
 
 
+def _handle_sigterm(_signum, _frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main() -> None:
-    parser = create_parser()
-    args = parser.parse_args()
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+    args = create_parser().parse_args()
 
     if args.command == "send":
-        run_file_monitor(args.folder, args.target_ip)
-
-    elif args.command == "receive":
+        run_file_monitor(args.folder, args.router)
+    else:
         run_session_manager(args.folder)
 
 

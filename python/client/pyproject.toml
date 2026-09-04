@@ -1,37 +1,33 @@
 [project]
-name = "client"
+name = "uniflow-client"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-authors = [
-    { name = "Roey", email = "roeyfaiman@gmail.com" }
-]
+description = "Python File Monitor and Session Manager for Uniflow"
 requires-python = ">=3.13"
 dependencies = [
-    "grpcio-tools>=1.83.1",
-    "protobuf>=7.36.1",
-    "raptorq>=2.0.0",
+    "protobuf>=7.35.1,<8",
+    "raptorq==2.0.0",
 ]
 
 [project.scripts]
 uniflow = "client.cli:main"
 
 [build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
-line-length = 80
+line-length = 88
 target-version = "py313"
+extend-exclude = ["*_pb2.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.0",
-    "ruff>=0.16.5",
+    "pytest>=8.3",
+    "ruff>=0.16",
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"src/client/*_pb2.py" = ["ALL"]

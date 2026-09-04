@@ -2,48 +2,71 @@ from pathlib import Path
 
 from client.common.round_robin import round_robin
 
+FileSignature = tuple[int, int]
+
 
 class FileMonitor:
     def __init__(
         self,
         watch_folder: Path,
         number_of_senders: int = 3,
-    ):
-        self.watch_folder = watch_folder
-        self.known_files = {}
-        self.round_robin = round_robin(
-            number_of_senders
-        )
+        stable_scans: int = 2,
+    ) -> None:
+        self.watch_folder = watch_folder.resolve()
+        self.stable_scans = stable_scans
+        self.known_files: dict[Path, FileSignature] = {}
+        self.pending: dict[Path, tuple[FileSignature, int]] = {}
+        self.round_robin = round_robin(number_of_senders)
 
     def get_files(self) -> list[Path]:
-        files = []
+        return sorted(
+            item
+            for item in self.watch_folder.rglob("*")
+            if item.is_file()
+        )
 
-        for item in self.watch_folder.iterdir():
-            if item.is_file():
-                files.append(item)
-
-        return files
+    @staticmethod
+    def _signature(file: Path) -> FileSignature:
+        stat = file.stat()
+        return stat.st_size, stat.st_mtime_ns
 
     def get_changed_files(self) -> list[Path]:
-        changed_files = []
+        changed_files: list[Path] = []
+        current_files = set(self.get_files())
 
-        for file in self.get_files():
-            modified_time = (
-                file.stat().st_mtime_ns
-            )
+        for file in current_files:
+            try:
+                signature = self._signature(file)
+            except FileNotFoundError:
+                continue
 
-            if (
-                file not in self.known_files
-                or self.known_files[file]
-                != modified_time
-            ):
+            if self.known_files.get(file) == signature:
+                self.pending.pop(file, None)
+                continue
+
+            previous_signature, count = self.pending.get(file, (signature, 0))
+            if previous_signature == signature:
+                count += 1
+            else:
+                count = 1
+
+            if count >= self.stable_scans:
                 changed_files.append(file)
+                self.known_files[file] = signature
+                self.pending.pop(file, None)
+            else:
+                self.pending[file] = (signature, count)
 
-            self.known_files[file] = (
-                modified_time
-            )
+        missing = set(self.known_files) - current_files
+        for file in missing:
+            self.known_files.pop(file, None)
+            self.pending.pop(file, None)
 
-        return changed_files
+        return sorted(changed_files)
+
+    def mark_failed(self, file: Path) -> None:
+        self.known_files.pop(file, None)
+        self.pending.pop(file, None)
 
     def get_sender(self) -> int:
         return next(self.round_robin)

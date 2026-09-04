@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Generate deterministic end-to-end transfer test files."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from transfer_fixtures import (
+    FixtureEntry,
+    expected_sha256,
+    parse_manifest,
+    write_fixture_file,
+    write_manifest_sidecar,
+)
+
+ONE_GIB = 1024 * 1024 * 1024
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate transfer test files")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path(__file__).with_name("fixtures.manifest"),
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "data" / "out",
+    )
+    parser.add_argument(
+        "--include-1gb",
+        action="store_true",
+        help="Also generate a 1 GiB file",
+    )
+    args = parser.parse_args()
+
+    manifest_entries = parse_manifest(args.manifest)
+    if args.include_1gb:
+        manifest_entries.append(("large-1gb.bin", ONE_GIB))
+
+    sidecar_entries: list[FixtureEntry] = []
+    print(f"Generating {len(manifest_entries)} files in {args.out_dir}")
+
+    for relative_path, size in manifest_entries:
+        out_path = args.out_dir / relative_path
+        print(f"  {relative_path} ({size} bytes)")
+        write_fixture_file(out_path, relative_path, size)
+        sidecar_entries.append(
+            FixtureEntry(
+                relative_path=relative_path,
+                size=size,
+                sha256=expected_sha256(relative_path, size),
+            )
+        )
+
+    sidecar = write_manifest_sidecar(args.out_dir, sidecar_entries)
+    print(f"Wrote manifest sidecar: {sidecar}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

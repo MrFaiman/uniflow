@@ -1,0 +1,10 @@
+# relative_path size
+# Default suite: tiny, 1 KiB, 5 MiB, below/above 10 MiB, 30 MiB, nested path.
+empty.bin 0
+tiny.txt 64
+one-kb.bin 1K
+five-mb.bin 5M
+below-10mb.bin 10485759
+above-10mb.bin 10485761
+nested/sub/file.bin 4M
+thirty-mb.bin 30M
