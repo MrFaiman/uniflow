@@ -40,6 +40,47 @@ class PairPool:
                 self._available.append(index)
 
 
+def wait_until_stable(
+    path: Path,
+    quiet_period: float = 0.6,
+    timeout: float = 300.0,
+    poll_interval: float = 0.2,
+) -> bool:
+    """Wait until a file stops changing, so it is not sent mid-write.
+
+    A watcher fires as soon as a file appears, which for a large copy is long
+    before the last byte is written. Transferring then sends a truncated
+    prefix — and because the sender hashes whatever it read, the receiver
+    happily verifies that truncated content as correct. Observed with a 1 GiB
+    file: a 326 MiB partial transfer completed with "HASH OK" before the real
+    one. Whether the truncated or the complete copy lands last is pure timing.
+
+    Returns True once size and mtime hold steady for quiet_period, False if
+    the file is still changing at timeout or disappeared.
+    """
+    deadline = time.monotonic() + timeout
+    last: tuple[int, float] | None = None
+    stable_since: float | None = None
+
+    while time.monotonic() < deadline:
+        try:
+            stat = path.stat()
+        except OSError:
+            return False
+        current = (stat.st_size, stat.st_mtime)
+        now = time.monotonic()
+        if current == last:
+            if stable_since is not None and now - stable_since >= quiet_period:
+                return True
+        else:
+            last = current
+            stable_since = now
+        time.sleep(poll_interval)
+
+    logger.warning("file %s still changing after %.0fs", path, timeout)
+    return False
+
+
 def file_size_for_event(path_text: str, event_type: str) -> int | None:
     if event_type == "deleted":
         return None

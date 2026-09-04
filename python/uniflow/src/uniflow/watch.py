@@ -14,6 +14,7 @@ from uniflow.transfer import (
     PairPool,
     file_size_for_event,
     transfer_mode_for_size,
+    wait_until_stable,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,29 @@ class FolderEventHandler(FileSystemEventHandler):
             self._submit(self._send_single_pair, command, data, path_kwargs)
             return
 
+        # Size is measured inside the transfer thread, after the file has
+        # settled, so a still-being-written file is not sized (or sent) as a
+        # truncated prefix. Deciding small-vs-large out here would use the
+        # partial size and could route a large file down the single-pair path.
+        self._submit(self._send_file, command, data, path_kwargs)
+
+    def _send_file(
+        self,
+        command: str,
+        data: bytes,
+        *,
+        relative_path: str,
+        dest_relative_path: str = "",
+        is_directory: bool = False,
+    ) -> None:
+        path = data.decode()
+        # A move carries "src\ndest"; the destination is what settles.
+        target = path.split("\n", 1)[1] if command == "moved" else path
+        settle_path = Path(target)
+        if not wait_until_stable(settle_path):
+            logger.warning("skipping unstable or vanished file %s", settle_path)
+            return
+
         size = file_size_for_event(path, command)
         if size is None:
             logger.warning("could not determine file size for %s", path)
@@ -167,15 +191,23 @@ class FolderEventHandler(FileSystemEventHandler):
             logger.error("%s", err)
             return
 
+        path_kwargs = {
+            "relative_path": relative_path,
+            "dest_relative_path": dest_relative_path,
+            "is_directory": is_directory,
+        }
+
+        # Called directly rather than re-submitted: this already runs on a
+        # transfer thread, and one future per file keeps flush() meaningful.
         if mode == "single_pair":
-            self._submit(self._send_single_pair, command, data, path_kwargs)
+            self._send_single_pair(command, data, **path_kwargs)
         else:
             logger.info(
                 "coordinated transfer size=%d object threshold=%d",
                 size,
                 SMALL_FILE_MAX_BYTES,
             )
-            self._submit(self._send_coordinated, command, data, path_kwargs)
+            self._send_coordinated(command, data, **path_kwargs)
 
     def _submit(
         self,
