@@ -10,6 +10,17 @@ const (
 	SymbolSize         = 1024
 	MaxSymbolsPerBlock = 1024
 
+	// minRepairSymbols is a floor on the repair symbols per block, applied
+	// regardless of how small the block is.
+	//
+	// A purely proportional margin degenerates for small blocks: a 2 KiB file
+	// is 2 source symbols, so 30% buys a single spare packet and losing any
+	// two of the three transmitted kills the transfer permanently. That is
+	// exactly how a 2 KiB file was lost under combined faults while a 30 MB
+	// file survived — percentage margins only look adequate when K is large.
+	// Small blocks are cheap, so an absolute floor costs very little.
+	minRepairSymbols = 12
+
 	// repairPercent is the extra RaptorQ symbols sent per block, as a
 	// percentage of that block's source symbols.
 	//
@@ -159,10 +170,15 @@ func DecodeBlock(blockLen int, symbols map[uint32][]byte) ([]byte, error) {
 }
 
 // RepairSymbolCount returns how many encoding symbols to transmit for a block
-// with the given number of source symbols, rounding the repair margin up so
-// even a single-symbol block gets at least one repair symbol.
+// with the given number of source symbols: a proportional margin for large
+// blocks, but never fewer than minRepairSymbols so small blocks are not left
+// with a margin of one or two packets.
 func RepairSymbolCount(base uint32) uint32 {
-	return base + (base*repairPercent+99)/100
+	repair := (base*repairPercent + 99) / 100
+	if repair < minRepairSymbols {
+		repair = minRepairSymbols
+	}
+	return base + repair
 }
 
 func OwnsBlock(blockIndex, workerIndex, workerCount uint32) bool {

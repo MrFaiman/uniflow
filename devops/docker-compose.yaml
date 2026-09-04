@@ -8,9 +8,11 @@ services:
       UNIFLOW_WORKERS: "3"
       UNIFLOW_SKIP_BUILD: "1"
       IPC_SOCKET_PATH: /tmp/proto_ipc.sock
-      PACKET_LOSS: "0.03"
-      BIT_FLIP: "0.03"
-      MISROUTING: "0.03"
+      # Overridable so fault conditions can be varied per run without
+      # editing this file (see scripts/docker_fault_matrix.sh).
+      PACKET_LOSS: "${PACKET_LOSS:-0.03}"
+      BIT_FLIP: "${BIT_FLIP:-0.03}"
+      MISROUTING: "${MISROUTING:-0.03}"
       STATS_INTERVAL_SEC: "10"
     networks:
       - uniflow_net

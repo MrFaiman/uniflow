@@ -311,6 +311,10 @@ devops/              Docker Compose, router, test harness
 scripts/             Protobuf generation
 ```
 
-`python/client/` is an earlier, superseded pure-Python prototype. It is not
-built, imported, or run by anything here, and `proto/transfer.proto` belongs to
-it rather than to the current system.
+An earlier pure-Python prototype (`python/client/`, with its own
+`proto/transfer.proto`) was removed once the Go transport superseded it; it was
+built by nothing and imported by nothing. Recover it from git history if needed:
+
+```bash
+git log --oneline -- python/client
+```

@@ -136,3 +136,28 @@ func TestRepairMarginSurvivesSpecifiedLoss(t *testing.T) {
 		t.Fatal("a single-symbol block must still get a repair symbol")
 	}
 }
+
+// A proportional margin alone is degenerate for small blocks: a 2 KiB file is
+// two source symbols, and 30% of that is a single spare packet. Losing any two
+// of the three transmitted packets then destroys the transfer with no way to
+// ask for a resend, which is how a 2 KiB file was lost under combined faults
+// while a 30 MB file came through intact.
+func TestSmallBlocksGetAnAbsoluteRepairFloor(t *testing.T) {
+	for _, base := range []uint32{1, 2, 4, 8} {
+		total := transfer.RepairSymbolCount(base)
+		spare := total - base
+		if spare < 8 {
+			t.Fatalf(
+				"block of %d source symbols got only %d repair symbols; "+
+					"too few to survive realistic loss",
+				base, spare,
+			)
+		}
+	}
+	// Large blocks must still scale proportionally rather than being capped
+	// at the floor.
+	large := transfer.RepairSymbolCount(1000)
+	if large-1000 < 300 {
+		t.Fatalf("large block lost its proportional margin: %d", large-1000)
+	}
+}
