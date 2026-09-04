@@ -3,7 +3,7 @@ from string import ascii_letters, digits, hexdigits
 from client.common.config import get_max_file_bytes, get_worker_count
 from client.common.packet_hash import calculate_packet_hash
 from client.common.paths import normalize_relative_path
-from client.transfer_pb2 import FilePacket
+from client.transfer_pb2 import DELETE, WRITE, FilePacket
 
 MAX_BLOCK_SIZE = 2 * 1024 * 1024
 
@@ -31,13 +31,34 @@ def packet_is_valid(packet: FilePacket) -> bool:
     except ValueError:
         return False
 
+    if packet.target_receiver >= get_worker_count():
+        return False
+
+    if not _is_sha256(packet.packet_hash):
+        return False
+
+    if packet.operation == DELETE:
+        if packet.file_size != 0 or packet.file_hash or packet.data:
+            return False
+        if packet.packet_index != 0 or packet.total_packets != 1:
+            return False
+        if (
+            packet.block_index != 0
+            or packet.total_blocks != 0
+            or packet.block_size != 0
+            or packet.symbol_size != 0
+            or packet.block_offset != 0
+        ):
+            return False
+        return calculate_packet_hash(packet) == packet.packet_hash
+
+    if packet.operation != WRITE:
+        return False
+
     if packet.file_size > get_max_file_bytes():
         return False
 
-    if not _is_sha256(packet.file_hash) or not _is_sha256(packet.packet_hash):
-        return False
-
-    if packet.target_receiver >= get_worker_count():
+    if not _is_sha256(packet.file_hash):
         return False
 
     if packet.file_size == 0:

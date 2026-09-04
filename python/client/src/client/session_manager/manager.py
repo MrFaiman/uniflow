@@ -4,10 +4,11 @@ from pathlib import Path
 from google.protobuf.message import DecodeError
 
 from client.common.hash_utils import calculate_sha256
+from client.common.paths import safe_join
 from client.session_manager.decoder import decode_packet
 from client.session_manager.file_session import FileSession
 from client.session_manager.packet_validator import packet_is_valid
-from client.transfer_pb2 import FilePacket
+from client.transfer_pb2 import DELETE, FilePacket
 
 
 class SessionManager:
@@ -45,6 +46,10 @@ class SessionManager:
         self._maybe_log_packet_stats()
 
         if packet.file_id in self.finished_sessions:
+            return
+
+        if packet.operation == DELETE:
+            self._handle_delete(packet)
             return
 
         session = self._get_session(packet)
@@ -92,6 +97,34 @@ class SessionManager:
     @staticmethod
     def _file_version(file_id: str) -> int:
         return int(file_id.split(":", 1)[0])
+
+    def _handle_delete(self, packet: FilePacket) -> None:
+        version = self._file_version(packet.file_id)
+        latest = self.latest_version_by_path.get(packet.file_name)
+
+        # A delayed old DELETE must never erase a newer file version.
+        if latest is not None and version < latest:
+            self.finished_sessions.add(packet.file_id)
+            return
+
+        # This acts as a tombstone. Old WRITE packets arriving after the
+        # DELETE will be ignored by _get_session because their version is older.
+        self.latest_version_by_path[packet.file_name] = version
+        self._discard_older_sessions(packet.file_name, version)
+
+        try:
+            final_path = safe_join(self.output_folder, packet.file_name)
+            existed = final_path.exists()
+            final_path.unlink(missing_ok=True)
+            if existed:
+                print(f"DELETED: {packet.file_name}", flush=True)
+            else:
+                print(f"DELETE: {packet.file_name} was already absent", flush=True)
+        except OSError as error:
+            print(f"Could not delete {packet.file_name}: {error}", flush=True)
+            return
+
+        self.finished_sessions.add(packet.file_id)
 
     def _get_session(self, packet: FilePacket) -> FileSession | None:
         version = self._file_version(packet.file_id)
@@ -152,3 +185,4 @@ class SessionManager:
 
         self.finished_sessions.add(session.file_id)
         self.sessions.pop(session.file_id, None)
+

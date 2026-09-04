@@ -16,6 +16,7 @@ class FileMonitor:
         self.stable_scans = stable_scans
         self.known_files: dict[Path, FileSignature] = {}
         self.pending: dict[Path, tuple[FileSignature, int]] = {}
+        self.deleted_files: set[Path] = set()
         self.round_robin = round_robin(number_of_senders)
 
     def get_files(self) -> list[Path]:
@@ -33,6 +34,11 @@ class FileMonitor:
     def get_changed_files(self) -> list[Path]:
         changed_files: list[Path] = []
         current_files = set(self.get_files())
+
+        # If a path was recreated before a pending DELETE was sent,
+        # the final desired state is "file exists", so cancel that delete.
+        for file in current_files:
+            self.deleted_files.discard(file)
 
         for file in current_files:
             try:
@@ -61,8 +67,16 @@ class FileMonitor:
         for file in missing:
             self.known_files.pop(file, None)
             self.pending.pop(file, None)
+            self.deleted_files.add(file)
 
         return sorted(changed_files)
+
+    def get_deleted_files(self) -> list[Path]:
+        # Do not clear here. A failed DELETE transmission must be retried.
+        return sorted(self.deleted_files)
+
+    def mark_delete_sent(self, file: Path) -> None:
+        self.deleted_files.discard(file)
 
     def mark_failed(self, file: Path) -> None:
         self.known_files.pop(file, None)

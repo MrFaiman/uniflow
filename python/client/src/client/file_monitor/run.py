@@ -11,7 +11,7 @@ from client.common.config import (
 from client.common.ipc import connect_to_server
 from client.file_monitor.monitor import FileMonitor
 from client.file_monitor.packet_router import SMALL_FILE_LIMIT
-from client.file_monitor.transfer import transfer_file
+from client.file_monitor.transfer import transfer_delete, transfer_file
 from client.supervisor import SenderSupervisor
 
 
@@ -57,6 +57,25 @@ def _transfer_small_batch(
                 print(f"Transfer failed for {file}: {error}", flush=True)
 
 
+def _transfer_deletes(
+    files: list[Path],
+    monitor: FileMonitor,
+    connections: list[socket.socket],
+    watch_folder: Path,
+) -> None:
+    for file in files:
+        try:
+            packet_count = transfer_delete(file, connections, watch_folder)
+            monitor.mark_delete_sent(file)
+            print(
+                f"Sent delete for {file} through {packet_count} Sender paths",
+                flush=True,
+            )
+        except Exception as error:
+            # Leave the path in monitor.deleted_files so it is retried.
+            print(f"Delete transfer failed for {file}: {error}", flush=True)
+
+
 def monitor_files(
     monitor: FileMonitor,
     connections: list[socket.socket],
@@ -69,6 +88,16 @@ def monitor_files(
     while True:
         supervisor.check()
         changed_files = monitor.get_changed_files()
+        deleted_files = monitor.get_deleted_files()
+
+        if deleted_files:
+            _transfer_deletes(
+                deleted_files,
+                monitor,
+                connections,
+                watch_folder,
+            )
+            supervisor.check()
 
         small_files: list[Path] = []
         large_files: list[Path] = []
@@ -128,3 +157,4 @@ def run_file_monitor(watch_folder: Path, router_host: str) -> None:
         for connection in connections:
             connection.close()
         supervisor.stop()
+
