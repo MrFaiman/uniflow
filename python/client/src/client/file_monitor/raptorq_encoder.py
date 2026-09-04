@@ -10,16 +10,32 @@ from client.common.hash_utils import calculate_sha256
 from client.transfer_pb2 import FilePacket
 
 SYMBOL_SIZE = 1024
-BLOCK_SIZE = 1024 * 1024
+
+# Smaller application-level blocks keep each RaptorQ decode operation short.
+# This matters because the Python raptorq binding performs the native decode
+# synchronously, so very large blocks can temporarily stall Python threads.
+BLOCK_SIZE = 256 * 1024
+
 MIN_REPAIR_PACKETS = 16
 
 
 def _repair_packet_count(block_size: int, repair_percent: int) -> int:
     if repair_percent == 0:
         return 0
-    source_symbols = max(1, math.ceil(block_size / SYMBOL_SIZE))
-    proportional = math.ceil(source_symbols * repair_percent / 100)
-    return max(MIN_REPAIR_PACKETS, proportional)
+
+    source_symbols = max(
+        1,
+        math.ceil(block_size / SYMBOL_SIZE),
+    )
+
+    proportional = math.ceil(
+        source_symbols * repair_percent / 100
+    )
+
+    return max(
+        MIN_REPAIR_PACKETS,
+        proportional,
+    )
 
 
 def _fill_common_metadata(
@@ -46,11 +62,15 @@ def encode_file(
 ):
     file_size = file.stat().st_size
     max_size = get_max_file_bytes()
+
     if file_size > max_size:
-        raise ValueError(f"file is larger than the 1 GiB project limit: {file}")
+        raise ValueError(
+            f"file is larger than the 1 GiB project limit: {file}"
+        )
 
     if relative_path is None:
         relative_path = file.name
+
     if repair_percent is None:
         repair_percent = get_repair_percent()
 
@@ -59,6 +79,7 @@ def encode_file(
 
     if file_size == 0:
         packet = FilePacket()
+
         _fill_common_metadata(
             packet,
             file_id=file_id,
@@ -67,26 +88,42 @@ def encode_file(
             file_hash=file_hash,
             total_blocks=0,
         )
+
         packet.packet_index = 0
         packet.total_packets = 1
         packet.block_index = 0
         packet.block_size = 0
         packet.block_offset = 0
         packet.data = b""
+
         yield packet
         return
 
-    total_blocks = math.ceil(file_size / BLOCK_SIZE)
+    total_blocks = math.ceil(
+        file_size / BLOCK_SIZE
+    )
 
     with file.open("rb") as opened_file:
         block_index = 0
+
         while data := opened_file.read(BLOCK_SIZE):
-            encoder = Encoder.with_defaults(data, SYMBOL_SIZE)
-            repair_packets = _repair_packet_count(len(data), repair_percent)
-            encoded_packets = encoder.get_encoded_packets(repair_packets)
+            encoder = Encoder.with_defaults(
+                data,
+                SYMBOL_SIZE,
+            )
+
+            repair_packets = _repair_packet_count(
+                len(data),
+                repair_percent,
+            )
+
+            encoded_packets = encoder.get_encoded_packets(
+                repair_packets
+            )
 
             for packet_index, data_packet in enumerate(encoded_packets):
                 packet = FilePacket()
+
                 _fill_common_metadata(
                     packet,
                     file_id=file_id,
@@ -95,12 +132,14 @@ def encode_file(
                     file_hash=file_hash,
                     total_blocks=total_blocks,
                 )
+
                 packet.packet_index = packet_index
                 packet.total_packets = len(encoded_packets)
                 packet.data = data_packet
                 packet.block_index = block_index
                 packet.block_size = len(data)
                 packet.block_offset = block_index * BLOCK_SIZE
+
                 yield packet
 
             block_index += 1
