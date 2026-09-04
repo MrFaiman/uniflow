@@ -189,13 +189,28 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 		return fmt.Errorf("invalid relative path: %w", err)
 	}
 
-	data, err := os.ReadFile(absPath)
+	// Stream rather than load. All three Senders open the same file at the
+	// same time for a coordinated transfer, so reading it whole would cost
+	// three times the file size in RAM across the machine; a 1 GB transfer
+	// would need ~3 GB. Each worker instead reads only the blocks it owns,
+	// one MaxBlockBytes block at a time.
+	file, err := os.Open(absPath)
 	if err != nil {
-		return fmt.Errorf("read file: %w", err)
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat file: %w", err)
 	}
 
-	plan := PlanFile(data)
-	checksum := FileChecksum(data)
+	checksum, err := StreamChecksum(file)
+	if err != nil {
+		return fmt.Errorf("checksum file: %w", err)
+	}
+
+	plan := PlanFileBySize(int(info.Size()))
 
 	fdt := &pb.FileDeliveryTable{
 		SessionId:   s.sessionID,
@@ -252,11 +267,25 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 	}
 
 	packetCount := 0
-	for _, block := range plan.Blocks {
-		if !OwnsBlock(block.Index, sendWorkerIndex, sendWorkerCount) {
+	// Reused across blocks so the working set stays one block, not one file.
+	blockBuf := make([]byte, MaxBlockBytes)
+	for blockIndex := uint32(0); blockIndex < plan.SourceBlocks; blockIndex++ {
+		if !OwnsBlock(blockIndex, sendWorkerIndex, sendWorkerCount) {
 			continue
 		}
-		enc, baseSymbols, err := EncodeBlock(block)
+		blockLen := BlockByteLength(plan, blockIndex)
+		if blockLen == 0 {
+			continue
+		}
+		offset := int64(blockIndex) * int64(MaxBlockBytes)
+		if _, err := file.ReadAt(blockBuf[:blockLen], offset); err != nil {
+			return fmt.Errorf("read block %d: %w", blockIndex, err)
+		}
+		enc, baseSymbols, err := EncodeBlock(BlockPlan{
+			Index:    blockIndex,
+			Data:     blockBuf[:blockLen],
+			SymbolsK: uint32((blockLen + SymbolSize - 1) / SymbolSize),
+		})
 		if err != nil {
 			return err
 		}
@@ -266,7 +295,7 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 			pkt := &pb.FluteDataPacket{
 				SessionId:         s.sessionID,
 				ObjectId:          objectID,
-				SourceBlockNumber: block.Index,
+				SourceBlockNumber: blockIndex,
 				EncodingSymbolId:  esi,
 				Payload:           symbol,
 			}

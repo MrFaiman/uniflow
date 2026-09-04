@@ -9,7 +9,20 @@ import (
 const (
 	SymbolSize         = 1024
 	MaxSymbolsPerBlock = 1024
-	repairFraction     = 20 // percent extra repair symbols per block
+
+	// repairPercent is the extra RaptorQ symbols sent per block, as a
+	// percentage of that block's source symbols.
+	//
+	// There is no ACK, so a block that arrives short is never retried: it
+	// simply never decodes and the transfer stalls forever. The margin must
+	// therefore exceed the worst-case loss a block can suffer. Under the
+	// specified router conditions those losses stack — ~3% dropped, ~3%
+	// corrupted (a flipped datagram fails to parse and is discarded), and
+	// ~3% misrouted to a Receiver that holds too few of this block's symbols
+	// to use them — for roughly 9%, and real loss arrives in bursts rather
+	// than evenly spread. The previous 5% could not absorb even the residual
+	// jitter of a fault-free run, which made large transfers intermittent.
+	repairPercent = 30
 )
 
 type BlockPlan struct {
@@ -24,6 +37,29 @@ type FilePlan struct {
 	SourceBlocks   uint32
 	SymbolSize     uint32
 	OriginalLength int
+}
+
+// MaxBlockBytes is how many file bytes one source block covers. It bounds a
+// streaming Sender's working set: only one block need be resident at a time.
+const MaxBlockBytes = MaxSymbolsPerBlock * SymbolSize
+
+// PlanFileBySize derives the same layout as PlanFile from the file's length
+// alone, without holding its contents. It carries no per-block Data, so a
+// Sender can read each block on demand instead of loading a whole file (a
+// 1 GB transfer would otherwise cost ~1 GB in every one of the three Sender
+// processes at once).
+func PlanFileBySize(originalLength int) FilePlan {
+	totalSymbols := uint32((originalLength + SymbolSize - 1) / SymbolSize)
+	if totalSymbols == 0 {
+		totalSymbols = 1
+	}
+	sourceBlocks := (totalSymbols + MaxSymbolsPerBlock - 1) / MaxSymbolsPerBlock
+	return FilePlan{
+		TotalSymbols:   totalSymbols,
+		SourceBlocks:   sourceBlocks,
+		SymbolSize:     SymbolSize,
+		OriginalLength: originalLength,
+	}
 }
 
 func PlanFile(data []byte) FilePlan {
@@ -122,8 +158,11 @@ func DecodeBlock(blockLen int, symbols map[uint32][]byte) ([]byte, error) {
 	return nil, fmt.Errorf("insufficient symbols for block len %d", blockLen)
 }
 
+// RepairSymbolCount returns how many encoding symbols to transmit for a block
+// with the given number of source symbols, rounding the repair margin up so
+// even a single-symbol block gets at least one repair symbol.
 func RepairSymbolCount(base uint32) uint32 {
-	return base + base/uint32(repairFraction)
+	return base + (base*repairPercent+99)/100
 }
 
 func OwnsBlock(blockIndex, workerIndex, workerCount uint32) bool {
