@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MrFaiman/uniflow/pb"
@@ -28,9 +29,15 @@ const (
 )
 
 type Sender struct {
-	conn        *net.UDPConn
-	destAddrs   []*net.UDPAddr
-	dataAddr    *net.UDPAddr
+	conn      *net.UDPConn
+	destAddrs []*net.UDPAddr
+	dataAddr  *net.UDPAddr
+	// SetTarget mutates destAddrs/dataAddr, and the IPC server handles each
+	// connection on its own goroutine, so concurrent commands would otherwise
+	// clobber each other's destination mid-transfer. Serializing per Sender
+	// process costs nothing: one process is one worker, and the parallelism
+	// that matters is across the three Sender processes.
+	mu          sync.Mutex
 	sessionID   uint64
 	workerIndex uint32
 	workerCount uint32

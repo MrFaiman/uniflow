@@ -30,6 +30,12 @@ def udp_port() -> int:
     return int(raw)
 
 
+def target_port() -> int:
+    """Base UDP port the Senders transmit to (Receivers' ports by default)."""
+    raw = os.environ.get("UNIFLOW_TARGET_PORT")
+    return int(raw) if raw else udp_port()
+
+
 def receive_dir() -> str:
     return os.environ.get("RECEIVE_DIR", "/tmp/uniflow-in")
 

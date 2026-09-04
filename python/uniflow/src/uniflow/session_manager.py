@@ -155,6 +155,16 @@ class SessionManager:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = out_path.with_name(out_path.name + ".part")
 
+        # A zero-byte file produces no data packets and therefore stages no
+        # blocks; the FDT alone is the completion signal.
+        if state.file_size == 0:
+            out_path.write_bytes(b"")
+            logger.info(
+                "COMPLETE: %s - HASH OK (0 bytes, empty file)",
+                state.file_name,
+            )
+            return
+
         digest = hashlib.sha256()
         written = 0
         try:

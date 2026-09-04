@@ -54,6 +54,9 @@ func handleIPCConn(conn net.Conn, sender *Sender) error {
 
 	resp := &pb.IPCResponse{Success: true, Message: fmt.Sprintf("handled %s", req.Command)}
 
+	// SetTarget and the send that follows it must not interleave with another
+	// connection's command, since both act on shared destination state.
+	sender.mu.Lock()
 	if req.TargetIp != "" {
 		if err := sender.SetTarget(req.TargetIp, req.Coordinated); err != nil {
 			resp.Success = false
@@ -75,6 +78,7 @@ func handleIPCConn(conn net.Conn, sender *Sender) error {
 			resp.Message = err.Error()
 		}
 	}
+	sender.mu.Unlock()
 
 	if err := WriteProto(conn, resp); err != nil {
 		return fmt.Errorf("write response: %w", err)

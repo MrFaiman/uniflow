@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import (  # noqa: E402
+    FORWARD_PORT_BY_LISTEN_PORT,
+    LISTEN_PORT_LIST,
     ROUTER_IP,
     RX_HOST,
     RX_PORT_LIST,
@@ -19,6 +21,12 @@ from config import (  # noqa: E402
 )
 
 logger = logging.getLogger(__name__)
+
+# Logging one line per packet dominates the router's per-packet cost and makes
+# it, not the network, the bottleneck for large transfers. Keep it opt-in and
+# rely on the periodic aggregate stats instead.
+TRACE_PACKETS = os.environ.get("ROUTER_TRACE_PACKETS") == "1"
+RECV_BUFFER_BYTES = int(os.environ.get("ROUTER_RECV_BUFFER", 8 << 20))
 
 
 @dataclass
@@ -100,14 +108,29 @@ def start_router() -> None:
     )
 
     listening_sockets: dict[socket.socket, int] = {}
-    for port in RX_PORT_LIST:
+    for port in LISTEN_PORT_LIST:
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # The router is a single-threaded hop carrying every packet of a
+        # coordinated transfer. Without a large receive buffer the kernel
+        # discards the burst before this loop can drain it, which shows up
+        # as loss the fault-injection settings never asked for.
+        try:
+            recv_sock.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_RCVBUF,
+                RECV_BUFFER_BYTES,
+            )
+        except OSError as err:
+            logger.warning("could not raise receive buffer: %s", err)
         recv_sock.bind((ROUTER_IP, port))
         listening_sockets[recv_sock] = port
         logger.info(
-            "listening for TX on %s:%d (loss=%.0f%% flip=%.0f%% misroute=%.0f%%)",
+            "listening for TX on %s:%d -> %s:%d "
+            "(loss=%.0f%% flip=%.0f%% misroute=%.0f%%)",
             ROUTER_IP,
             port,
+            RX_HOST,
+            FORWARD_PORT_BY_LISTEN_PORT[port],
             DisruptionProbabilities.PACKET_LOSS * 100,
             DisruptionProbabilities.BIT_FLIP * 100,
             DisruptionProbabilities.MISROUTING * 100,
@@ -149,7 +172,8 @@ def start_router() -> None:
 
         for sock in readable:
             data, addr = sock.recvfrom(65535)
-            intended_port = listening_sockets[sock]
+            listen_port = listening_sockets[sock]
+            intended_port = FORWARD_PORT_BY_LISTEN_PORT[listen_port]
             packet_size = len(data)
 
             stats.received += 1
@@ -157,22 +181,24 @@ def start_router() -> None:
             port_stats = stats.port_stats(intended_port)
             port_stats.received += 1
 
-            logger.info(
-                "received size=%d src=%s intended_port=%d",
-                packet_size,
-                addr,
-                intended_port,
-            )
-
-            if random.random() < DisruptionProbabilities.PACKET_LOSS:
-                stats.dropped += 1
-                port_stats.dropped += 1
+            if TRACE_PACKETS:
                 logger.info(
-                    "dropped size=%d src=%s intended_port=%d",
+                    "received size=%d src=%s intended_port=%d",
                     packet_size,
                     addr,
                     intended_port,
                 )
+
+            if random.random() < DisruptionProbabilities.PACKET_LOSS:
+                stats.dropped += 1
+                port_stats.dropped += 1
+                if TRACE_PACKETS:
+                    logger.info(
+                        "dropped size=%d src=%s intended_port=%d",
+                        packet_size,
+                        addr,
+                        intended_port,
+                    )
                 continue
 
             flipped = False
@@ -180,15 +206,16 @@ def start_router() -> None:
                 data, byte_index, bit_index = apply_bit_flip(data)
                 flipped = True
                 stats.bit_flipped += 1
-                logger.info(
-                    "bit_flip size=%d src=%s intended_port=%d "
-                    "byte=%d bit=%d",
-                    packet_size,
-                    addr,
-                    intended_port,
-                    byte_index,
-                    bit_index,
-                )
+                if TRACE_PACKETS:
+                    logger.info(
+                        "bit_flip size=%d src=%s intended_port=%d "
+                        "byte=%d bit=%d",
+                        packet_size,
+                        addr,
+                        intended_port,
+                        byte_index,
+                        bit_index,
+                    )
 
             target_port = intended_port
             misrouted = False
@@ -199,28 +226,31 @@ def start_router() -> None:
                 stats.misrouted += 1
                 stats.port_stats(intended_port).misroute_out += 1
                 stats.port_stats(target_port).misroute_in += 1
-                logger.info(
-                    "misrouted size=%d src=%s intended_port=%d target_port=%d",
-                    packet_size,
-                    addr,
-                    intended_port,
-                    target_port,
-                )
+                if TRACE_PACKETS:
+                    logger.info(
+                        "misrouted size=%d src=%s intended_port=%d "
+                        "target_port=%d",
+                        packet_size,
+                        addr,
+                        intended_port,
+                        target_port,
+                    )
 
             send_sock.sendto(data, (rx_addr, target_port))
             stats.forwarded += 1
             stats.bytes_out += len(data)
             stats.port_stats(target_port).forwarded += 1
-            logger.info(
-                "forwarded size=%d src=%s intended_port=%d target_port=%d "
-                "bit_flipped=%s misrouted=%s",
-                len(data),
-                addr,
-                intended_port,
-                target_port,
-                flipped,
-                misrouted,
-            )
+            if TRACE_PACKETS:
+                logger.info(
+                    "forwarded size=%d src=%s intended_port=%d "
+                    "target_port=%d bit_flipped=%s misrouted=%s",
+                    len(data),
+                    addr,
+                    intended_port,
+                    target_port,
+                    flipped,
+                    misrouted,
+                )
 
     log_stats(stats)
 

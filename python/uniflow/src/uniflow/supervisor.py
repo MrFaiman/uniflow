@@ -13,6 +13,7 @@ from uniflow.utils import (
     load_dot_env,
     session_socket_path,
     socket_path,
+    target_port,
     udp_port,
     worker_count,
 )
@@ -31,7 +32,11 @@ class SenderSupervisor:
         binary = _build_binary(go_dir)
         workers = worker_count()
         base_socket = socket_path()
-        base_port = udp_port()
+        # Where the Senders transmit to. Normally the same port numbers the
+        # Receivers bind, because the router forwards port-for-port from a
+        # different host. When router and receivers share a host it must
+        # listen elsewhere, so allow the target range to be set explicitly.
+        base_port = target_port()
         port_list = ",".join(str(base_port + i) for i in range(workers))
         session_id = secrets.randbits(63)
 

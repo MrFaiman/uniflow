@@ -25,6 +25,10 @@ type Receiver struct {
 	objectMeta  map[uint64]*pb.FileDeliveryTable
 	blocks      map[uint64]map[uint32]*blockState
 	assembled   map[uint64]bool
+	// Counters for loss this process caused itself, kept distinct from
+	// router-injected loss so the two are never confused when diagnosing.
+	corrupted uint64
+	overrun   uint64
 }
 
 func NewReceiver(port int, receiveDir string) (*Receiver, error) {
@@ -63,18 +67,53 @@ func (r *Receiver) Close() {
 	}
 }
 
+// datagramQueueDepth bounds how many parsed datagrams may wait for
+// processing. It exists to absorb bursts, not to buffer without limit: if
+// processing stays behind, dropping here (where it is counted and visible)
+// is better than silently overflowing the kernel socket buffer.
+const datagramQueueDepth = 8192
+
+// Run drains the UDP socket on one goroutine and does the RaptorQ decode and
+// staging work on another. Decoding inline in the read loop meant the socket
+// went unread for the whole duration of a decode, so bursts overflowed the
+// kernel receive buffer and the loss looked like network loss. Reading and
+// processing are therefore decoupled by a bounded queue.
 func (r *Receiver) Run() error {
-	buf := make([]byte, 65535)
-	for {
-		n, _, err := r.conn.ReadFromUDP(buf)
-		if err != nil {
-			return fmt.Errorf("read udp: %w", err)
+	queue := make(chan *pb.UdpDatagram, datagramQueueDepth)
+	readErr := make(chan error, 1)
+
+	go func() {
+		buf := make([]byte, 65535)
+		defer close(queue)
+		for {
+			n, _, err := r.conn.ReadFromUDP(buf)
+			if err != nil {
+				readErr <- fmt.Errorf("read udp: %w", err)
+				return
+			}
+			datagram := &pb.UdpDatagram{}
+			if err := proto.Unmarshal(buf[:n], datagram); err != nil {
+				// Expected under bit-flip injection: a corrupted datagram
+				// usually fails to parse. Treat it as a lost symbol.
+				r.corrupted++
+				continue
+			}
+			select {
+			case queue <- datagram:
+			default:
+				r.overrun++
+				if r.overrun%1000 == 1 {
+					slog.Warn(
+						"processing queue full; dropping datagram",
+						"port", r.workerIndex,
+						"dropped_total", r.overrun,
+					)
+				}
+			}
 		}
-		var datagram pb.UdpDatagram
-		if err := proto.Unmarshal(buf[:n], &datagram); err != nil {
-			slog.Warn("bad datagram", "err", err)
-			continue
-		}
+	}()
+
+	for datagram := range queue {
 		switch payload := datagram.Payload.(type) {
 		case *pb.UdpDatagram_Fdt:
 			r.handleFDT(payload.Fdt)
@@ -84,6 +123,7 @@ func (r *Receiver) Run() error {
 			r.handlePathOperation(payload.PathOp)
 		}
 	}
+	return <-readErr
 }
 
 func (r *Receiver) shouldApplyPathOps() bool {
