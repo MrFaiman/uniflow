@@ -16,6 +16,7 @@ import os
 import shutil
 import socket
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +26,11 @@ from uniflow.pb import message_pb2
 logger = logging.getLogger(__name__)
 
 _READ_CHUNK_BYTES = 1024 * 1024
+
+# How long an incomplete object may sit without new blocks before it is
+# reported as stalled, and how often to check.
+STALL_SECONDS = 30.0
+STALL_POLL_SECONDS = 10.0
 
 
 @dataclass
@@ -37,11 +43,20 @@ class ObjectState:
     checksum: bytes
     staged_blocks: dict[int, str] = field(default_factory=dict)
     completed: bool = False
+    last_progress: float = field(default_factory=time.monotonic)
+    stall_reported: bool = False
 
     def is_complete(self) -> bool:
         if self.file_size == 0:
             return True
         return len(self.staged_blocks) >= self.source_blocks
+
+    def missing_blocks(self) -> list[int]:
+        return [
+            index
+            for index in range(self.source_blocks)
+            if index not in self.staged_blocks
+        ]
 
 
 class SessionManager:
@@ -53,6 +68,7 @@ class SessionManager:
         # handled on its own thread, and they mutate shared per-object state.
         self._lock = threading.Lock()
         self._server: socket.socket | None = None
+        self._stop = threading.Event()
 
     def start(self) -> None:
         if os.path.exists(self.socket_path):
@@ -63,9 +79,50 @@ class SessionManager:
         self._server = server
         logger.info("session manager listening on %s", self.socket_path)
 
+    def report_stalls(self, stall_after: float = STALL_SECONDS) -> list[int]:
+        """Log objects that stopped making progress before completing.
+
+        There is no ACK channel, so a transfer that arrives short cannot be
+        retried — it would otherwise sit here silently forever. Surfacing it
+        turns an invisible hang into a diagnosable failure.
+        """
+        now = time.monotonic()
+        stalled: list[int] = []
+        with self._lock:
+            for object_id, state in self._objects.items():
+                if state.completed or state.stall_reported:
+                    continue
+                if now - state.last_progress < stall_after:
+                    continue
+                state.stall_reported = True
+                stalled.append(object_id)
+                missing = state.missing_blocks()
+                logger.error(
+                    "STALLED: %s object=%d has %d/%d blocks after %.0fs idle; "
+                    "missing=%s (unrecoverable: no ACK channel to request a "
+                    "retransmit)",
+                    state.file_name,
+                    object_id,
+                    len(state.staged_blocks),
+                    state.source_blocks,
+                    now - state.last_progress,
+                    missing[:10],
+                )
+        return stalled
+
+    def _watchdog(self, interval: float) -> None:
+        while not self._stop.wait(interval):
+            self.report_stalls()
+
     def serve_forever(self) -> None:
         if self._server is None:
             raise RuntimeError("start() must be called before serve_forever()")
+        watchdog = threading.Thread(
+            target=self._watchdog,
+            args=(STALL_POLL_SECONDS,),
+            daemon=True,
+        )
+        watchdog.start()
         while True:
             try:
                 conn, _ = self._server.accept()
@@ -79,6 +136,10 @@ class SessionManager:
             thread.start()
 
     def stop(self) -> None:
+        self._stop.set()
+        # Report anything still outstanding at shutdown, so an interrupted
+        # transfer is never silently forgotten.
+        self.report_stalls(stall_after=0.0)
         if self._server is not None:
             self._server.close()
             self._server = None
@@ -125,6 +186,7 @@ class SessionManager:
 
             if report.staging_path:
                 state.staged_blocks[report.block_index] = report.staging_path
+            state.last_progress = time.monotonic()
 
             logger.info(
                 "block report object=%d block=%d worker=%d (%d/%d)",

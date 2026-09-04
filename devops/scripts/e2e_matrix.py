@@ -193,6 +193,55 @@ class Stack:
                 stale.unlink(missing_ok=True)
 
 
+def run_modification_phase(stack: Stack, timeout: float) -> int:
+    """Overwrite already-transferred files and re-verify.
+
+    Covers the spec's "creation and modification" watch requirement, repeated
+    transfers of the same path, and re-use of an object that RX has already
+    completed once.
+    """
+    print("\n=== MODIFICATION PHASE ===")
+    targets = [
+        ("1kb.bin", 4096),
+        ("5mb.bin", 6 * 1024 * 1024),
+        ("just_over_10mb.bin", 12 * 1024 * 1024),
+    ]
+    expected: dict[str, tuple[int, str]] = {}
+    for name, new_size in targets:
+        seed = hashlib.sha256(("modified-" + name).encode()).digest()
+        data = (seed * (new_size // len(seed) + 1))[:new_size]
+        (stack.tx_out / name).write_bytes(data)
+        expected[name] = (new_size, hashlib.sha256(data).hexdigest())
+        print(f"  modified {name} -> {new_size} bytes")
+
+    deadline = time.monotonic() + timeout
+    remaining = dict(expected)
+    while remaining and time.monotonic() < deadline:
+        for name, (size, want_hash) in list(remaining.items()):
+            candidate = stack.rx_in / name
+            if (
+                candidate.exists()
+                and candidate.stat().st_size == size
+                and sha256_file(candidate) == want_hash
+            ):
+                del remaining[name]
+        if remaining:
+            time.sleep(0.5)
+
+    failures = 0
+    for name, (size, want_hash) in expected.items():
+        candidate = stack.rx_in / name
+        if not candidate.exists():
+            print(f"  FAIL {name}: modified version never arrived")
+            failures += 1
+        elif sha256_file(candidate) != want_hash:
+            print(f"  FAIL {name}: still holds the pre-modification content")
+            failures += 1
+        else:
+            print(f"  OK   {name}  {size} bytes (modified content verified)")
+    return failures
+
+
 def run_matrix(stack: Stack, timeout: float) -> int:
     fixtures = build_fixtures()
     expected: dict[str, tuple[int, str]] = {}
@@ -251,11 +300,19 @@ def check_router_traffic(stack: Stack) -> int:
     """
     if not stack.use_router:
         return 0
-    text = stack.router_log.read_text(errors="replace")
-    # The final "[stats]" line is the router's own authoritative tally; the
-    # per-packet trace lines are off by default because logging them makes
-    # the router the bottleneck.
-    summary = [ln for ln in text.splitlines() if ln.startswith("[stats] received")]
+    # The router dumps aggregate stats only when its socket goes idle, so a
+    # run that finishes promptly can reach this check before the first dump.
+    # Wait for one rather than reporting a false failure.
+    deadline = time.monotonic() + 20.0
+    summary: list[str] = []
+    while time.monotonic() < deadline:
+        text = stack.router_log.read_text(errors="replace")
+        summary = [
+            ln for ln in text.splitlines() if ln.startswith("[stats] received")
+        ]
+        if summary:
+            break
+        time.sleep(0.5)
     if not summary:
         print("\nrouter: no stats line found")
         print("  ERROR: router produced no statistics")
