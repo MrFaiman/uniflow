@@ -32,8 +32,26 @@ var (
 	) * time.Microsecond
 )
 
-// How often each worker repeats the object announcement while transmitting.
-const fdtRepeatEveryPackets = 32
+const (
+	// How often each worker repeats the object announcement while transmitting.
+	fdtRepeatEveryPackets = 32
+	// Copies of the announcement sent before any data, and again after it.
+	// Nothing repairs a lost announcement, so redundancy is the only defence.
+	fdtInitialCopies  = 3
+	fdtTrailingCopies = 2
+)
+
+// announce transmits the object's FileDeliveryTable the given number of times.
+func (s *Sender) announce(fdt *pb.FileDeliveryTable, copies int) error {
+	for i := 0; i < copies; i++ {
+		if err := s.sendDatagram(&pb.UdpDatagram{
+			Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type Sender struct {
 	conn      *net.UDPConn
@@ -248,9 +266,9 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 		if coordinated && s.workerIndex != 0 {
 			return nil
 		}
-		if err := s.sendDatagram(&pb.UdpDatagram{
-			Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
-		}); err != nil {
+		// An empty file has no data packets at all, so the announcement is
+		// the entire transfer — losing one copy loses the file.
+		if err := s.announce(fdt, fdtInitialCopies+fdtTrailingCopies); err != nil {
 			return err
 		}
 		slog.Info(
@@ -274,9 +292,15 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 	// reach a Receiver at all that Receiver discarded its entire share.
 	// The FDT is small and idempotent, so announcing from each worker is far
 	// cheaper than losing a block permanently.
-	if err := s.sendDatagram(&pb.UdpDatagram{
-		Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
-	}); err != nil {
+	//
+	// It is sent several times because it is the one packet FEC cannot
+	// protect: repair symbols reconstruct data blocks, but nothing
+	// reconstructs a lost announcement, and without it every symbol for the
+	// object is unusable. A small file transmits too few packets to reach
+	// the periodic repeat below, so a single corrupted announcement used to
+	// lose the whole file — observed as a 1-byte file vanishing under
+	// bit-flip injection while large files were unaffected.
+	if err := s.announce(fdt, fdtInitialCopies); err != nil {
 		return err
 	}
 
@@ -327,13 +351,19 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 			// by FEC; repetition is the only way a Receiver that missed it
 			// can still learn the object exists.
 			if packetCount%fdtRepeatEveryPackets == 0 {
-				if err := s.sendDatagram(&pb.UdpDatagram{
-					Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
-				}); err != nil {
+				if err := s.announce(fdt, 1); err != nil {
 					return err
 				}
 			}
 		}
+	}
+
+	// A final announcement after the data. If every earlier copy was lost or
+	// corrupted, the Receiver has been buffering this object's symbols with
+	// no idea what they belong to; this is the last chance to tell it, and it
+	// then replays what it held rather than discarding the whole transfer.
+	if err := s.announce(fdt, fdtTrailingCopies); err != nil {
+		return err
 	}
 
 	slog.Info(

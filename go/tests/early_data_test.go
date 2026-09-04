@@ -147,3 +147,70 @@ func TestPendingSymbolsAreBounded(t *testing.T) {
 		}
 	}
 }
+
+// The announcement is the one packet FEC cannot protect: repair symbols
+// rebuild data blocks, but nothing rebuilds a lost FDT, and without it every
+// symbol for the object is unusable. Small files transmit too few packets to
+// reach the periodic repeat, so a single corrupted announcement used to lose
+// the whole file — seen as a 1-byte file vanishing under bit-flip injection.
+// It must therefore be transmitted redundantly.
+func TestSmallFileAnnouncedRedundantly(t *testing.T) {
+	const port = 19102
+
+	t.Setenv("UNIFLOW_WORKER_COUNT", "1")
+	t.Setenv("UNIFLOW_WORKER_INDEX", "0")
+	t.Setenv("UNIFLOW_SESSION_ID", "8080")
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	fdtSeen := make(chan struct{}, 64)
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, _, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			datagram, err := transfer.UnmarshalEnvelope(buf[:n])
+			if err != nil {
+				continue
+			}
+			if datagram.GetFdt() != nil {
+				select {
+				case fdtSeen <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	sender, err := transfer.NewSender([]int{port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sender.Close()
+	if err := sender.SetTarget("127.0.0.1", false); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := filepath.Join(t.TempDir(), "one-byte.bin")
+	if err := os.WriteFile(tmp, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sender.SendFile(tmp, "one-byte.bin", 1, false); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	if len(fdtSeen) < 3 {
+		t.Fatalf(
+			"a 1-byte file produced only %d announcements; "+
+				"one lost packet would lose the file",
+			len(fdtSeen),
+		)
+	}
+}
