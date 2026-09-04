@@ -1,4 +1,4 @@
-SMALL_FILE_LIMIT = 10 * 1024 * 1024
+SMALL_FILE_LIMIT = 10_000_000
 
 
 def route_packets(

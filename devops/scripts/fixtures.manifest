@@ -4,7 +4,7 @@ empty.bin 0
 tiny.txt 64
 one-kb.bin 1K
 five-mb.bin 5M
-below-10mb.bin 10485759
-above-10mb.bin 10485761
+below-10mb.bin 9999999
+above-10mb.bin 10000001
 nested/sub/file.bin 4M
 thirty-mb.bin 30M
