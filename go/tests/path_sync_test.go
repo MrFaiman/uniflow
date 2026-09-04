@@ -9,7 +9,6 @@ import (
 
 	"github.com/MrFaiman/uniflow/pb"
 	"github.com/MrFaiman/uniflow/transfer"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestNestedFileRoundtrip(t *testing.T) {
@@ -149,7 +148,7 @@ func sendPathOp(conn *net.UDPConn, op *pb.PathOperation) error {
 	datagram := &pb.UdpDatagram{
 		Payload: &pb.UdpDatagram_PathOp{PathOp: op},
 	}
-	payload, err := proto.Marshal(datagram)
+	payload, err := transfer.MarshalEnvelope(datagram)
 	if err != nil {
 		return err
 	}

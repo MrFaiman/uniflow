@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/MrFaiman/uniflow/pb"
-	"google.golang.org/protobuf/proto"
 )
 
 type blockState struct {
@@ -25,11 +24,24 @@ type Receiver struct {
 	objectMeta  map[uint64]*pb.FileDeliveryTable
 	blocks      map[uint64]map[uint32]*blockState
 	assembled   map[uint64]bool
+	// Data packets that arrived before their object's announcement. They
+	// cannot be decoded yet (no FEC parameters or file length), but with no
+	// ACK they will never be resent either, so holding them until the FDT
+	// turns up is the difference between recovering the block and losing it.
+	pending map[uint64][]*pb.FluteDataPacket
 	// Counters for loss this process caused itself, kept distinct from
 	// router-injected loss so the two are never confused when diagnosing.
 	corrupted uint64
 	overrun   uint64
+	// Symbols dropped because the pending buffer for an unannounced object
+	// was already full.
+	pendingDropped uint64
 }
+
+// Bounds the memory an unannounced object may occupy. Generous enough to
+// cover an announcement that is merely late, small enough that a stream of
+// junk object IDs cannot exhaust memory.
+const maxPendingPerObject = 4096
 
 func NewReceiver(port int, receiveDir string) (*Receiver, error) {
 	if err := os.MkdirAll(receiveDir, 0o755); err != nil {
@@ -58,6 +70,7 @@ func NewReceiver(port int, receiveDir string) (*Receiver, error) {
 		objectMeta:  make(map[uint64]*pb.FileDeliveryTable),
 		blocks:      make(map[uint64]map[uint32]*blockState),
 		assembled:   make(map[uint64]bool),
+		pending:     make(map[uint64][]*pb.FluteDataPacket),
 	}, nil
 }
 
@@ -91,11 +104,19 @@ func (r *Receiver) Run() error {
 				readErr <- fmt.Errorf("read udp: %w", err)
 				return
 			}
-			datagram := &pb.UdpDatagram{}
-			if err := proto.Unmarshal(buf[:n], datagram); err != nil {
-				// Expected under bit-flip injection: a corrupted datagram
-				// usually fails to parse. Treat it as a lost symbol.
+			datagram, err := UnmarshalEnvelope(buf[:n])
+			if err != nil {
+				// Expected under bit-flip injection: the CRC catches
+				// corruption that would otherwise parse as a valid but
+				// wrong message. Treat it as a lost symbol; FEC repairs it.
 				r.corrupted++
+				if r.corrupted%500 == 1 {
+					slog.Warn(
+						"discarded corrupted datagram",
+						"err", err,
+						"corrupted_total", r.corrupted,
+					)
+				}
 				continue
 			}
 			select {
@@ -207,6 +228,19 @@ func (r *Receiver) handleFDT(fdt *pb.FileDeliveryTable) {
 			"file", fdt.FileName,
 			"size", fdt.FileSize,
 		)
+		// Now that the object is known, feed back anything that arrived
+		// ahead of this announcement.
+		if queued := r.pending[fdt.ObjectId]; len(queued) > 0 {
+			delete(r.pending, fdt.ObjectId)
+			slog.Info(
+				"replaying early symbols",
+				"object", fdt.ObjectId,
+				"count", len(queued),
+			)
+			for _, pkt := range queued {
+				r.handleData(pkt)
+			}
+		}
 	}
 	if fdt.FileSize != 0 {
 		return
@@ -251,6 +285,17 @@ func (r *Receiver) handleData(pkt *pb.FluteDataPacket) {
 	}
 	fdt := r.objectMeta[pkt.ObjectId]
 	if fdt == nil {
+		// The announcement has not arrived yet. Hold the symbol rather than
+		// discard it: it will never be retransmitted.
+		if r.assembled[pkt.ObjectId] {
+			return
+		}
+		queued := r.pending[pkt.ObjectId]
+		if len(queued) >= maxPendingPerObject {
+			r.pendingDropped++
+			return
+		}
+		r.pending[pkt.ObjectId] = append(queued, pkt)
 		return
 	}
 
@@ -433,6 +478,7 @@ func (r *Receiver) tryAssemble(objectID uint64, coordinated bool) {
 	}
 	delete(r.objectMeta, objectID)
 	delete(r.blocks, objectID)
+	delete(r.pending, objectID)
 
 	slog.Info(
 		"file assembled",

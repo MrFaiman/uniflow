@@ -4,3 +4,6 @@ devops/data/in/*
 devops/data/out/*
 !devops/data/in/.gitkeep
 !devops/data/out/.gitkeep
+
+# Vendored Go deps for the offline Docker build (regenerate: go mod vendor)
+go/vendor/

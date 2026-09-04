@@ -12,21 +12,28 @@ import (
 	"time"
 
 	"github.com/MrFaiman/uniflow/pb"
-	"google.golang.org/protobuf/proto"
 )
 
-// There is no ACK channel, so the Sender has no natural backpressure signal
-// at all. Left unpaced, a Go for-loop fires UDP writes far faster than the
-// single-goroutine Receiver read/decode/stage loop drains its socket, which
-// overflows the kernel's UDP receive buffer and silently drops symbols well
-// beyond what RaptorQ's repair margin can recover — reproduced directly on
-// loopback with zero router-injected loss. This yields periodically instead
-// of relying on socket buffer size alone (see Receiver.SetReadBuffer), which
-// only shifts the point of overflow rather than removing it.
-const (
-	dataPacingBatch = 64
-	dataPacingDelay = time.Millisecond
+// There is no ACK channel, so the Sender has no backpressure signal at all:
+// it cannot discover that anything downstream is falling behind. The send
+// rate must therefore be chosen to suit the *slowest* element of the path,
+// not the fastest. Three unpaced Senders will outrun both the Receivers'
+// decode loops and any intermediate hop, overflowing kernel UDP buffers and
+// dropping far more than the FEC margin can repair — reproduced on loopback
+// with zero injected loss.
+//
+// Defaults are deliberately conservative because the reference path includes
+// a single-threaded Python router forwarding every packet of every worker.
+// Tune with UNIFLOW_PACING_BATCH / UNIFLOW_PACING_DELAY_US on a faster path.
+var (
+	dataPacingBatch = envInt("UNIFLOW_PACING_BATCH", 16)
+	dataPacingDelay = time.Duration(
+		envInt("UNIFLOW_PACING_DELAY_US", 1000),
+	) * time.Microsecond
 )
+
+// How often each worker repeats the object announcement while transmitting.
+const fdtRepeatEveryPackets = 32
 
 type Sender struct {
 	conn      *net.UDPConn
@@ -116,9 +123,9 @@ func (s *Sender) sendDatagram(datagram *pb.UdpDatagram) error {
 	if len(s.destAddrs) == 0 {
 		return fmt.Errorf("no destination addresses configured")
 	}
-	payload, err := proto.Marshal(datagram)
+	payload, err := MarshalEnvelope(datagram)
 	if err != nil {
-		return fmt.Errorf("marshal datagram: %w", err)
+		return err
 	}
 	for _, addr := range s.destAddrs {
 		if _, err := s.conn.WriteToUDP(payload, addr); err != nil {
@@ -132,9 +139,9 @@ func (s *Sender) sendDataDatagram(datagram *pb.UdpDatagram) error {
 	if s.dataAddr == nil {
 		return fmt.Errorf("no data destination configured")
 	}
-	payload, err := proto.Marshal(datagram)
+	payload, err := MarshalEnvelope(datagram)
 	if err != nil {
-		return fmt.Errorf("marshal datagram: %w", err)
+		return err
 	}
 	if _, err := s.conn.WriteToUDP(payload, s.dataAddr); err != nil {
 		return fmt.Errorf("write udp to %s: %w", s.dataAddr, err)
@@ -256,14 +263,21 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 		return nil
 	}
 
-	if coordinated && s.workerIndex != 0 {
-		// non-leader workers skip FDT in coordinated mode
-	} else {
-		if err := s.sendDatagram(&pb.UdpDatagram{
-			Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
-		}); err != nil {
-			return err
-		}
+	// Every worker announces the object before sending any of its data, and
+	// broadcasts that announcement to all Receiver ports.
+	//
+	// A Receiver cannot use a data packet for an object it has never heard of
+	// (it has no FEC parameters or file length for it), so it discards those
+	// packets — and with no ACK they are never sent again. Previously only
+	// worker 0 announced, so every symbol workers 1 and 2 sent before that
+	// single announcement propagated was lost outright, and if it failed to
+	// reach a Receiver at all that Receiver discarded its entire share.
+	// The FDT is small and idempotent, so announcing from each worker is far
+	// cheaper than losing a block permanently.
+	if err := s.sendDatagram(&pb.UdpDatagram{
+		Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
+	}); err != nil {
+		return err
 	}
 
 	packetCount := 0
@@ -308,7 +322,11 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 			if packetCount%dataPacingBatch == 0 {
 				time.Sleep(dataPacingDelay)
 			}
-			if coordinated && packetCount%32 == 0 && s.workerIndex == 0 {
+			// Repeat the announcement periodically, from every worker. The
+			// FDT carries no payload data, so a lost one cannot be repaired
+			// by FEC; repetition is the only way a Receiver that missed it
+			// can still learn the object exists.
+			if packetCount%fdtRepeatEveryPackets == 0 {
 				if err := s.sendDatagram(&pb.UdpDatagram{
 					Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
 				}); err != nil {

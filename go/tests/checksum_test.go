@@ -11,7 +11,6 @@ import (
 
 	"github.com/MrFaiman/uniflow/pb"
 	"github.com/MrFaiman/uniflow/transfer"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestFileChecksum(t *testing.T) {
@@ -144,7 +143,7 @@ func sendFDT(conn *net.UDPConn, fdt *pb.FileDeliveryTable) error {
 	datagram := &pb.UdpDatagram{
 		Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},
 	}
-	payload, err := proto.Marshal(datagram)
+	payload, err := transfer.MarshalEnvelope(datagram)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,7 @@ func sendBlockSymbols(
 		datagram := &pb.UdpDatagram{
 			Payload: &pb.UdpDatagram_Data{Data: pkt},
 		}
-		payload, err := proto.Marshal(datagram)
+		payload, err := transfer.MarshalEnvelope(datagram)
 		if err != nil {
 			return err
 		}

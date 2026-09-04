@@ -1,0 +1,19 @@
+# Overlay that builds the TX/RX images without Go needing network access.
+#
+# Use when `docker compose up --build` fails with:
+#   x509: certificate signed by unknown authority
+# while fetching Go modules — typical on networks that intercept TLS.
+#
+# Prepare the inputs once on the host, then bring the stack up with both files:
+#
+#   ./build-offline.sh
+#   docker compose -f docker-compose.yaml -f docker-compose.offline.yaml up --build
+#
+services:
+  rx_machine:
+    build:
+      dockerfile: devops/uniflow.offline.Dockerfile
+
+  tx_machine:
+    build:
+      dockerfile: devops/uniflow.offline.Dockerfile

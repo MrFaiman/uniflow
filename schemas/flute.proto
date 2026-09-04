@@ -72,3 +72,20 @@ message UdpDatagram {
     PathOperation path_op = 3;
   }
 }
+
+// ---------------------------------------------------------
+// 5. The integrity envelope
+//
+// The router flips bits. A flipped UdpDatagram very often still parses as
+// valid protobuf, just with wrong values — a corrupted object_id, file_size
+// or source_block_number — which silently poisons receiver state rather than
+// being detected. Wrapping the serialized datagram alongside a CRC32 of its
+// bytes means corruption is caught before the contents are ever trusted, and
+// a rejected packet simply becomes a lost symbol that FEC can repair.
+//
+// This is what actually travels in a UDP packet.
+// ---------------------------------------------------------
+message UdpEnvelope {
+  fixed32 crc32 = 1;   // CRC-32 (IEEE) over the payload bytes below
+  bytes payload = 2;   // serialized UdpDatagram
+}
