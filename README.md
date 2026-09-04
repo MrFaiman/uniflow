@@ -66,10 +66,11 @@ is ever sent back across the network to TX.
 | Fault | How it is handled |
 |---|---|
 | Packet loss | RaptorQ repair symbols. Each block ships 30% more symbols than it strictly needs |
-| Bit flip | A corrupted datagram fails to parse and is discarded, becoming an ordinary lost symbol that FEC covers. The final file is verified against the sender's SHA-256 |
+| Bit flip | Every datagram travels inside a `UdpEnvelope` carrying a CRC32 of its bytes. A mismatch is discarded and becomes an ordinary lost symbol that FEC repairs. Without this a flipped bit usually still decodes as valid protobuf with a *wrong* `object_id` or block number, silently poisoning receiver state. The final file is verified against the sender's SHA-256 |
 | Misrouting | Receivers accept any block that reaches them, not only the ones they "own", and stage it into the directory all Receivers share, so the Session Manager still finds it |
 | Duplicates | Blocks are keyed by index; a block already staged ignores further symbols |
 | Reordering | Order is irrelevant — blocks are addressed by index, symbols by encoding-symbol ID |
+| Data before its announcement | A Receiver cannot decode symbols for an object it has not been told about. Every worker announces the object before transmitting and repeats it periodically, and Receivers hold early symbols in a bounded buffer and replay them when the announcement arrives, rather than discarding data that will never be resent |
 
 The 30% repair margin is sized for the specified conditions: roughly 3% dropped
 plus 3% corrupted plus 3% misrouted stack to about 9%, and real loss is bursty.
@@ -89,7 +90,10 @@ missing block numbers rather than hanging silently.
 
 ---
 
-## Quick start (Docker)
+## Quick start (Docker — three machines)
+
+The Compose stack models the three physical machines of the assignment as
+three containers on one bridge network: `tx_machine`, `router`, `rx_machine`.
 
 ```bash
 cd devops
@@ -101,6 +105,47 @@ Then drop a file in and watch it arrive:
 ```bash
 echo hello > devops/data/out/test.txt
 ls devops/data/in/
+```
+
+The router injects 3% packet loss, 3% bit flips and 3% misrouting by default,
+so this path exercises the fault handling, not just the happy case.
+
+Confirm the process topology inside the containers:
+
+```bash
+docker compose exec tx_machine sh -c \
+  'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline; echo; done'
+# python -m uniflow.cli send /data/out router   <- File Monitor
+# /app/go/.bin/uniflow send   x3                <- three Senders
+
+docker compose exec rx_machine sh -c \
+  'for p in /proc/[0-9]*; do tr "\0" " " < $p/cmdline; echo; done'
+# /app/go/.bin/uniflow recv /data/in   x3       <- three Receivers
+# python -m uniflow.session_manager_run /data/in <- Session Manager
+```
+
+Router statistics and per-file verification:
+
+```bash
+docker compose logs router     | grep '\[stats\]'
+docker compose logs rx_machine | grep COMPLETE
+```
+
+### If the Docker build fails on Go module checksums
+
+On networks that intercept TLS, the image cannot verify Go module checksums
+and the build fails before any project code compiles:
+
+```
+x509: certificate signed by unknown authority
+```
+
+Build offline instead — vendored modules and protobuf generated on the host:
+
+```bash
+./devops/build-offline.sh
+cd devops
+docker compose -f docker-compose.yaml -f docker-compose.offline.yaml up --build
 ```
 
 ---
@@ -231,7 +276,8 @@ Schemas live in `schemas/`:
 
 - `message.proto` — IPC: `IPCRequest`/`IPCResponse` (TX) and `BlockReport` (RX)
 - `flute.proto` — wire format: `FileDeliveryTable`, `FluteDataPacket`,
-  `PathOperation`, wrapped in `UdpDatagram`
+  `PathOperation`, wrapped in `UdpDatagram`, which in turn travels inside a
+  CRC-carrying `UdpEnvelope` — that envelope is what a UDP packet contains
 
 Regenerate after any change:
 
