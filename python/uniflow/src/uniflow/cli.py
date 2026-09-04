@@ -79,3 +79,7 @@ def run_receive(dir_path: Path) -> None:
         supervisor.wait()
     finally:
         supervisor.stop()
+
+
+if __name__ == "__main__":
+    main()

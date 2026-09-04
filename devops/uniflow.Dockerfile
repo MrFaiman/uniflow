@@ -31,7 +31,9 @@ COPY --from=go-builder /src/python/uniflow/src/uniflow/pb /app/python/uniflow/sr
 WORKDIR /app/python/uniflow
 RUN uv sync --no-dev
 
-ENV PATH="/app/go/.bin:/app/python/uniflow/.venv/bin:${PATH}"
+# Python venv bin must win over go/.bin so the bare `uniflow` command resolves
+# to the supervisor CLI (uniflow.cli:main), not the raw single-process Go binary.
+ENV PATH="/app/python/uniflow/.venv/bin:/app/go/.bin:${PATH}"
 
 COPY devops/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh

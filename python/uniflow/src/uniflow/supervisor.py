@@ -3,6 +3,7 @@ import os
 import secrets
 import socket
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 from uniflow.process_pool import WorkerProcessPool, WorkerSpec
 from uniflow.utils import (
     load_dot_env,
+    session_socket_path,
     socket_path,
     udp_port,
     worker_count,
@@ -80,6 +82,7 @@ class SenderSupervisor:
 class ReceiverSupervisor:
     receive_base: Path
     pool: WorkerProcessPool | None = None
+    session_manager: subprocess.Popen | None = None
 
     def start(self) -> None:
         load_dot_env()
@@ -89,6 +92,12 @@ class ReceiverSupervisor:
         base_port = udp_port()
         receive_dir = self.receive_base.expanduser().resolve()
         receive_dir.mkdir(parents=True, exist_ok=True)
+        session_socket = session_socket_path()
+
+        # The Session Manager must be accepting connections before any
+        # Receiver stages its first block, otherwise early reports are lost.
+        self.session_manager = _start_session_manager(receive_dir)
+        _wait_for_sockets([session_socket])
 
         specs: list[WorkerSpec] = []
         for i in range(workers):
@@ -97,6 +106,7 @@ class ReceiverSupervisor:
             env["RECEIVE_DIR"] = str(receive_dir)
             env["UNIFLOW_WORKER_INDEX"] = str(i)
             env["UNIFLOW_WORKER_COUNT"] = str(workers)
+            env["UNIFLOW_SESSION_SOCKET"] = session_socket
             specs.append(
                 WorkerSpec(
                     binary=str(binary),
@@ -125,6 +135,26 @@ class ReceiverSupervisor:
         if self.pool is not None:
             self.pool.shutdown()
             self.pool = None
+        if self.session_manager is not None:
+            self.session_manager.terminate()
+            try:
+                self.session_manager.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.session_manager.kill()
+            self.session_manager = None
+
+
+def _start_session_manager(receive_dir: Path) -> subprocess.Popen:
+    logger.info("starting session manager dir=%s", receive_dir)
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uniflow.session_manager_run",
+            str(receive_dir),
+        ],
+        env=os.environ.copy(),
+    )
 
 
 def _find_go_dir() -> Path:

@@ -34,6 +34,16 @@ def receive_dir() -> str:
     return os.environ.get("RECEIVE_DIR", "/tmp/uniflow-in")
 
 
+def session_socket_path() -> str:
+    """Unix socket the Receivers use to report staged blocks to the
+    Session Manager. Kept separate from IPC_SOCKET_PATH, which is the
+    TX-side File Monitor -> Sender channel."""
+    return os.environ.get(
+        "UNIFLOW_SESSION_SOCKET",
+        "/tmp/uniflow_session.sock",
+    )
+
+
 def worker_count() -> int:
     raw = os.environ.get("UNIFLOW_WORKERS", "3")
     count = int(raw)

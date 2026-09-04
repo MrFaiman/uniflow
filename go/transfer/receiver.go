@@ -14,6 +14,7 @@ import (
 
 type blockState struct {
 	symbols map[uint32][]byte
+	staged  bool
 }
 
 type Receiver struct {
@@ -34,6 +35,16 @@ func NewReceiver(port int, receiveDir string) (*Receiver, error) {
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen udp %d: %w", port, err)
+	}
+	// A coordinated large-file transfer can burst thousands of ~1KB symbol
+	// packets faster than this single-goroutine read/decode loop drains the
+	// socket. Without a larger OS receive buffer, the kernel silently drops
+	// the overflow before Run() ever sees it, well beyond what RaptorQ's
+	// repair-symbol margin can recover. Best-effort: some platforms cap
+	// SO_RCVBUF below this value, which is fine, not fatal.
+	const receiveBufferBytes = 8 << 20 // 8 MiB
+	if err := conn.SetReadBuffer(receiveBufferBytes); err != nil {
+		slog.Warn("could not raise UDP receive buffer", "err", err)
 	}
 	return &Receiver{
 		conn:        conn,
@@ -146,27 +157,31 @@ func (r *Receiver) handleFDT(fdt *pb.FileDeliveryTable) {
 	if fdt == nil || fdt.FecParams == nil {
 		return
 	}
+	_, known := r.objectMeta[fdt.ObjectId]
 	r.objectMeta[fdt.ObjectId] = fdt
-	slog.Info(
-		"fdt",
-		"session", fdt.SessionId,
-		"object", fdt.ObjectId,
-		"file", fdt.FileName,
-		"size", fdt.FileSize,
-	)
-	if fdt.FileSize == 0 {
-		r.tryAssemble(fdt.ObjectId, fdt.GetCoordinated())
+	if !known {
+		slog.Info(
+			"fdt",
+			"session", fdt.SessionId,
+			"object", fdt.ObjectId,
+			"file", fdt.FileName,
+			"size", fdt.FileSize,
+		)
 	}
-}
-
-func (r *Receiver) shouldHandleBlock(
-	blockIndex uint32,
-	coordinated bool,
-) bool {
-	if !coordinated {
-		return true
+	if fdt.FileSize != 0 {
+		return
 	}
-	return OwnsBlock(blockIndex, r.workerIndex, r.workerCount)
+	// An empty file produces no data packets, so the FDT itself is the only
+	// completion signal. Report it once (leader only, to avoid three
+	// duplicate reports of the same zero-byte object).
+	if sessionManagerSocket() != "" {
+		if r.shouldAssemble(fdt.GetCoordinated()) && !r.assembled[fdt.ObjectId] {
+			r.assembled[fdt.ObjectId] = true
+			r.reportBlockStaged(fdt, 0, "")
+		}
+		return
+	}
+	r.tryAssemble(fdt.ObjectId, fdt.GetCoordinated())
 }
 
 func (r *Receiver) shouldAssemble(coordinated bool) bool {
@@ -198,11 +213,22 @@ func (r *Receiver) handleData(pkt *pb.FluteDataPacket) {
 	if fdt == nil {
 		return
 	}
-	if !r.shouldHandleBlock(pkt.SourceBlockNumber, fdt.GetCoordinated()) {
+
+	// Accept and stage any block that actually arrives here, regardless of
+	// whether this worker "owns" it (blockIndex % workerCount). Under normal
+	// operation the Sender's 1:1 worker->port mapping already means a given
+	// port only ever receives the blocks it owns; this only matters when a
+	// router misroutes a packet to the wrong Receiver process. Decoding and
+	// staging it anyway (into the receive dir every Receiver worker shares)
+	// is what makes that misroute recoverable instead of a guaranteed loss.
+	block := r.blockStateFor(pkt.ObjectId, pkt.SourceBlockNumber)
+	if block.staged {
+		// Already reconstructed. Later symbols for this block (repair symbols,
+		// duplicates, misrouted copies) are redundant by design — dropping
+		// them here avoids re-running an expensive decode and rewriting the
+		// staged file for every one of them.
 		return
 	}
-
-	block := r.blockStateFor(pkt.ObjectId, pkt.SourceBlockNumber)
 	block.symbols[pkt.EncodingSymbolId] = pkt.Payload
 
 	plan := FilePlan{
@@ -211,6 +237,25 @@ func (r *Receiver) handleData(pkt *pb.FluteDataPacket) {
 		OriginalLength: int(fdt.FileSize),
 	}
 	blockLen := BlockByteLength(plan, pkt.SourceBlockNumber)
+
+	// RaptorQ needs at least K source symbols before any decode can succeed.
+	// DecodeBlock rebuilds its decoder and replays every accumulated symbol on
+	// each call, so attempting it per arriving packet costs O(N^2) per block
+	// and makes this read loop fall far enough behind that the kernel drops
+	// the tail of the stream. Waiting until K symbols are in hand keeps the
+	// decode attempts (and their cost) proportional to the repair margin.
+	symbolSize := int(plan.SymbolSize)
+	if symbolSize <= 0 {
+		symbolSize = SymbolSize
+	}
+	minSymbols := (blockLen + symbolSize - 1) / symbolSize
+	if minSymbols < 1 {
+		minSymbols = 1
+	}
+	if len(block.symbols) < minSymbols {
+		return
+	}
+
 	result, err := DecodeBlock(blockLen, block.symbols)
 	if err != nil {
 		return
@@ -225,6 +270,8 @@ func (r *Receiver) handleData(pkt *pb.FluteDataPacket) {
 		slog.Error("staging write failed", "path", stagingPath, "err", err)
 		return
 	}
+	block.staged = true
+	block.symbols = nil
 
 	slog.Info(
 		"block staged",
@@ -233,6 +280,13 @@ func (r *Receiver) handleData(pkt *pb.FluteDataPacket) {
 		"worker", r.workerIndex,
 	)
 
+	// Hand off to the Session Manager when one is configured. It owns
+	// completion tracking and reconstruction across all Receiver processes.
+	// Without it (standalone/unit-test use) fall back to local assembly.
+	if sessionManagerSocket() != "" {
+		r.reportBlockStaged(fdt, pkt.SourceBlockNumber, stagingPath)
+		return
+	}
 	if r.shouldAssemble(fdt.GetCoordinated()) {
 		r.tryAssemble(pkt.ObjectId, fdt.GetCoordinated())
 	}

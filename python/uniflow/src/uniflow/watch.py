@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -8,6 +10,7 @@ from watchdog.observers.polling import PollingObserver
 
 from uniflow.ipc import Ipc
 from uniflow.transfer import (
+    SMALL_FILE_MAX_BYTES,
     PairPool,
     file_size_for_event,
     transfer_mode_for_size,
@@ -31,11 +34,23 @@ class FolderEventHandler(FileSystemEventHandler):
         self.target_ip = target_ip
         self._ipc_clients = ipc_clients
         self._object_id = 0
+        self._object_id_lock = threading.Lock()
         self._pair_pool = PairPool(len(ipc_clients))
+        # watchdog delivers every event on one observer thread. Transferring
+        # inline there would serialize separate small files behind each other,
+        # defeating the PairPool's whole purpose of letting distinct
+        # Sender/Receiver pairs carry different files at the same time.
+        self._transfers = ThreadPoolExecutor(
+            max_workers=len(ipc_clients),
+            thread_name_prefix="uniflow-transfer",
+        )
+        self._pending: list[Future] = []
+        self._pending_lock = threading.Lock()
 
     def _next_object_id(self) -> int:
-        self._object_id += 1
-        return self._object_id
+        with self._object_id_lock:
+            self._object_id += 1
+            return self._object_id
 
     def _relative_path(self, abs_path: str) -> str:
         return Path(abs_path).resolve().relative_to(self.watch_root).as_posix()
@@ -50,7 +65,13 @@ class FolderEventHandler(FileSystemEventHandler):
         is_directory: bool = False,
     ) -> None:
         object_id = self._next_object_id()
-        for ipc in self._ipc_clients:
+
+        # Ipc.send blocks until its Sender has transmitted that worker's whole
+        # share of the file, so dispatching these in a plain loop would make
+        # the three Senders run strictly one after another. Fan out instead so
+        # all three transmit over the same wall-clock window, which is the
+        # point of splitting a large file across workers.
+        def dispatch(ipc: Ipc) -> None:
             ipc.send(
                 command,
                 data,
@@ -61,6 +82,15 @@ class FolderEventHandler(FileSystemEventHandler):
                 dest_relative_path=dest_relative_path,
                 is_directory=is_directory,
             )
+
+        with ThreadPoolExecutor(
+            max_workers=len(self._ipc_clients),
+        ) as executor:
+            futures = [
+                executor.submit(dispatch, ipc) for ipc in self._ipc_clients
+            ]
+            for future in futures:
+                future.result()
 
     def _send_single_pair(
         self,
@@ -123,7 +153,7 @@ class FolderEventHandler(FileSystemEventHandler):
         }
 
         if command in _METADATA_EVENTS or is_directory:
-            self._send_single_pair(command, data, **path_kwargs)
+            self._submit(self._send_single_pair, command, data, path_kwargs)
             return
 
         size = file_size_for_event(path, command)
@@ -138,14 +168,42 @@ class FolderEventHandler(FileSystemEventHandler):
             return
 
         if mode == "single_pair":
-            self._send_single_pair(command, data, **path_kwargs)
+            self._submit(self._send_single_pair, command, data, path_kwargs)
         else:
             logger.info(
                 "coordinated transfer size=%d object threshold=%d",
                 size,
-                10 * 1024 * 1024,
+                SMALL_FILE_MAX_BYTES,
             )
-            self._send_coordinated(command, data, **path_kwargs)
+            self._submit(self._send_coordinated, command, data, path_kwargs)
+
+    def _submit(
+        self,
+        func,  # noqa: ANN001 - bound method taking (command, data, **kwargs)
+        command: str,
+        data: bytes,
+        path_kwargs: dict,
+    ) -> None:
+        def run() -> None:
+            try:
+                func(command, data, **path_kwargs)
+            except Exception:
+                logger.exception("transfer failed for %s", path_kwargs)
+
+        future = self._transfers.submit(run)
+        with self._pending_lock:
+            self._pending = [f for f in self._pending if not f.done()]
+            self._pending.append(future)
+
+    def flush(self) -> None:
+        """Block until every dispatched transfer has finished."""
+        with self._pending_lock:
+            pending = list(self._pending)
+        for future in pending:
+            future.result()
+
+    def shutdown(self) -> None:
+        self._transfers.shutdown(wait=True)
 
 
 def _make_observer() -> Observer:
@@ -174,24 +232,4 @@ def watch_folder(
     finally:
         observer.stop()
         observer.join()
-
-if __name__ == "__main__":
-    import sys
-    
-    logging.basicConfig(level=logging.INFO)
-    
-    folder_path = Path(sys.argv[1] if len(sys.argv) > 1 else "/data/out")
-    target = sys.argv[2] if len(sys.argv) > 2 else "router"
-    
-    workers = int(os.environ.get("UNIFLOW_WORKERS", "3"))
-    
-    logger.info("Initializing %d IPC clients...", workers)
-    ipc_clients = [Ipc() for _ in range(workers)]
-    
-    # שבירת השורה לשניים כדי לעמוד במגבלת 80 התווים של ruff
-    logger.info(
-        "Starting watch_folder on %s with target %s",
-        folder_path,
-        target,
-    )
-    watch_folder(folder_path, target, ipc_clients)
+        handler.shutdown()

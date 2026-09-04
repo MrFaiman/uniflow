@@ -7,14 +7,11 @@ DIR=$2
 TARGET=$3
 
 if [ "$MODE" = "send" ]; then
-    echo "Starting Go uniflow sender daemon..."
-    uniflow send &
-    
-    echo "Starting Python folder watcher..."
-    exec python -m uniflow.watch "$DIR" "$TARGET"
+    echo "Starting uniflow send supervisor (File Monitor + Sender workers)..."
+    exec python -m uniflow.cli send "$DIR" "$TARGET"
 elif [ "$MODE" = "receive" ] || [ "$MODE" = "recv" ]; then
-    echo "Starting Go uniflow receiver daemon..."
-    exec uniflow recv
+    echo "Starting uniflow receive supervisor (Receiver workers)..."
+    exec python -m uniflow.cli receive "$DIR"
 else
     exec "$@"
 fi

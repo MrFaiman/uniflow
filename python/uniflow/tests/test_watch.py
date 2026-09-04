@@ -45,6 +45,7 @@ def test_handler_broadcasts_coordinated_for_large_file(
     monkeypatch.setattr(ipc1, "send", fake_send)
     handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(large)))
+    handler.flush()
     assert sent == [(True, 1), (True, 1)]
 
 
@@ -87,6 +88,7 @@ def test_handler_single_pair_for_small_file(
     monkeypatch.setattr(ipc1, "send", fake_send1)
     handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(small)))
+    handler.flush()
     assert len(sent) == 1
     assert sent[0] == (0, False, 1)
 
@@ -132,7 +134,9 @@ def test_handler_parallel_small_files_use_different_pairs(
     monkeypatch.setattr(ipc1, "send", fake_send1)
     handler = _handler(tmp_path, [ipc0, ipc1])
     handler.on_any_event(FileCreatedEvent(src_path=str(a)))
+    handler.flush()
     handler.on_any_event(FileCreatedEvent(src_path=str(b)))
+    handler.flush()
     assert pairs == [0, 1]
 
 
@@ -163,6 +167,7 @@ def test_handler_sends_moved_src_and_dest(
     handler.on_any_event(
         FileMovedEvent(src_path=str(tmp_path / "a.txt"), dest_path=str(dest)),
     )
+    handler.flush()
     assert sent == [False]
 
 
@@ -190,6 +195,7 @@ def test_handler_sends_directory_created(
     handler.on_any_event(
         DirCreatedEvent(src_path=str(tmp_path / "folder" / "sub")),
     )
+    handler.flush()
     assert calls == [("created", "folder/sub", True)]
 
 
@@ -219,6 +225,7 @@ def test_handler_sends_nested_file_relative_path(
     monkeypatch.setattr(ipc, "send", fake_send)
     handler = _handler(tmp_path, [ipc])
     handler.on_any_event(FileCreatedEvent(src_path=str(nested)))
+    handler.flush()
     assert calls == ["sub/file.txt"]
 
 
@@ -244,6 +251,7 @@ def test_handler_sends_directory_deleted(
     monkeypatch.setattr(ipc, "send", fake_send)
     handler = _handler(tmp_path, [ipc])
     handler.on_any_event(DirDeletedEvent(src_path=str(tmp_path / "gone")))
+    handler.flush()
     assert calls == [("deleted", "gone", True)]
 
 
@@ -274,6 +282,7 @@ def test_handler_sends_directory_moved(
             dest_path=str(tmp_path / "new"),
         ),
     )
+    handler.flush()
     assert calls == [("moved", "old", "new", True)]
 
 
@@ -299,4 +308,5 @@ def test_handler_ignores_closed_events(
     monkeypatch.setattr(ipc, "send", fake_send)
     handler = _handler(tmp_path, [ipc])
     handler.on_any_event(FileClosedEvent(src_path=str(tmp_path / "a.txt")))
+    handler.flush()
     assert sent == []

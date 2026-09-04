@@ -8,14 +8,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/MrFaiman/uniflow/pb"
 	"google.golang.org/protobuf/proto"
 )
 
+// There is no ACK channel, so the Sender has no natural backpressure signal
+// at all. Left unpaced, a Go for-loop fires UDP writes far faster than the
+// single-goroutine Receiver read/decode/stage loop drains its socket, which
+// overflows the kernel's UDP receive buffer and silently drops symbols well
+// beyond what RaptorQ's repair margin can recover — reproduced directly on
+// loopback with zero router-injected loss. This yields periodically instead
+// of relying on socket buffer size alone (see Receiver.SetReadBuffer), which
+// only shifts the point of overflow rather than removing it.
+const (
+	dataPacingBatch = 64
+	dataPacingDelay = time.Millisecond
+)
+
 type Sender struct {
 	conn        *net.UDPConn
 	destAddrs   []*net.UDPAddr
+	dataAddr    *net.UDPAddr
 	sessionID   uint64
 	workerIndex uint32
 	workerCount uint32
@@ -48,22 +63,32 @@ func (s *Sender) Close() {
 	}
 }
 
+// SetTarget resolves two destinations for this worker:
+//   - destAddrs: broadcast to every receiver port. Used only for the small,
+//     infrequent FileDeliveryTable so every Receiver process (which each hold
+//     independent objectMeta state) learns the object's FEC parameters,
+//     regardless of which worker happens to assemble the file.
+//   - dataAddr: this worker's own matching port only. Used for the bulk
+//     FluteDataPacket stream. Broadcasting data symbols to all receiver
+//     ports (as opposed to just the owning one) would triple real network
+//     and UDP-recv-buffer load for coordinated transfers with no benefit,
+//     since a non-owning Receiver discards them anyway (see OwnsBlock).
 func (s *Sender) SetTarget(host string, coordinated bool) error {
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return fmt.Errorf("target_ip is empty")
 	}
-
-	ports := s.destPorts
-	if !coordinated {
-		if int(s.workerIndex) >= len(s.destPorts) {
-			return fmt.Errorf("worker index %d out of range for ports", s.workerIndex)
-		}
-		ports = []int{s.destPorts[s.workerIndex]}
+	if int(s.workerIndex) >= len(s.destPorts) {
+		return fmt.Errorf("worker index %d out of range for ports", s.workerIndex)
 	}
 
-	addrs := make([]*net.UDPAddr, 0, len(ports))
-	for _, port := range ports {
+	broadcastPorts := s.destPorts
+	if !coordinated {
+		broadcastPorts = []int{s.destPorts[s.workerIndex]}
+	}
+
+	addrs := make([]*net.UDPAddr, 0, len(broadcastPorts))
+	for _, port := range broadcastPorts {
 		addr, err := net.ResolveUDPAddr("udp", joinHostPort(host, port))
 		if err != nil {
 			return fmt.Errorf("resolve %s:%d: %w", host, port, err)
@@ -71,6 +96,12 @@ func (s *Sender) SetTarget(host string, coordinated bool) error {
 		addrs = append(addrs, addr)
 	}
 	s.destAddrs = addrs
+
+	dataAddr, err := net.ResolveUDPAddr("udp", joinHostPort(host, s.destPorts[s.workerIndex]))
+	if err != nil {
+		return fmt.Errorf("resolve %s:%d: %w", host, s.destPorts[s.workerIndex], err)
+	}
+	s.dataAddr = dataAddr
 	return nil
 }
 
@@ -86,6 +117,20 @@ func (s *Sender) sendDatagram(datagram *pb.UdpDatagram) error {
 		if _, err := s.conn.WriteToUDP(payload, addr); err != nil {
 			return fmt.Errorf("write udp to %s: %w", addr, err)
 		}
+	}
+	return nil
+}
+
+func (s *Sender) sendDataDatagram(datagram *pb.UdpDatagram) error {
+	if s.dataAddr == nil {
+		return fmt.Errorf("no data destination configured")
+	}
+	payload, err := proto.Marshal(datagram)
+	if err != nil {
+		return fmt.Errorf("marshal datagram: %w", err)
+	}
+	if _, err := s.conn.WriteToUDP(payload, s.dataAddr); err != nil {
+		return fmt.Errorf("write udp to %s: %w", s.dataAddr, err)
 	}
 	return nil
 }
@@ -218,12 +263,15 @@ func (s *Sender) SendFile(absPath, relPath string, objectID uint64, coordinated 
 				EncodingSymbolId:  esi,
 				Payload:           symbol,
 			}
-			if err := s.sendDatagram(&pb.UdpDatagram{
+			if err := s.sendDataDatagram(&pb.UdpDatagram{
 				Payload: &pb.UdpDatagram_Data{Data: pkt},
 			}); err != nil {
 				return err
 			}
 			packetCount++
+			if packetCount%dataPacingBatch == 0 {
+				time.Sleep(dataPacingDelay)
+			}
 			if coordinated && packetCount%32 == 0 && s.workerIndex == 0 {
 				if err := s.sendDatagram(&pb.UdpDatagram{
 					Payload: &pb.UdpDatagram_Fdt{Fdt: fdt},

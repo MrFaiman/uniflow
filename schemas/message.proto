@@ -18,3 +18,25 @@ message IPCResponse {
   bool success = 1;
   string message = 2;
 }
+
+// Sent by each Receiver process to the local Session Manager over a Unix
+// Domain Socket every time it successfully decodes and stages one source
+// block. The Session Manager is the only component that sees reports from
+// all three Receivers, so it is the only one that can decide an object is
+// complete and reconstruct it.
+message BlockReport {
+  uint64 session_id = 1;
+  uint64 object_id = 2;
+  uint32 worker_index = 3;
+
+  // Object metadata, repeated on every report so the Session Manager can
+  // reconstruct even if it never saw the report carrying the first block.
+  string file_name = 4;
+  uint64 file_size = 5;
+  uint32 source_blocks = 6;
+  uint32 symbol_size = 7;
+  bytes checksum = 8;
+
+  uint32 block_index = 9;
+  string staging_path = 10;
+}
