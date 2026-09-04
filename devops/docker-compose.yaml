@@ -1,65 +1,106 @@
 services:
   router:
-    profiles: ["all", "tx"]
+    profiles:
+      - all
+      - tx
+
     build:
       context: .
       dockerfile: router/Dockerfile
+
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
+
+      # In all-in-one mode this defaults to the RX Docker container.
+      # In two-PC mode set RX_HOST to the physical RX computer IP.
       RX_HOST: "${RX_HOST:-rx_machine}"
+
       PACKET_LOSS: "${PACKET_LOSS:-0.03}"
       BIT_FLIP: "${BIT_FLIP:-0.03}"
       MISROUTING: "${MISROUTING:-0.03}"
+
       STATS_INTERVAL_SEC: "${STATS_INTERVAL_SEC:-10}"
       LOG_PACKETS: "${LOG_PACKETS:-0}"
       RANDOM_SEED: "${RANDOM_SEED:-1337}"
+
     networks:
       - uniflow_net
 
   rx_machine:
-    profiles: ["all", "rx"]
+    profiles:
+      - all
+      - rx
+
     build:
       context: ..
       dockerfile: devops/uniflow.Dockerfile
+
     hostname: rx_machine
-    command: ["receive", "/data/in"]
+
+    command:
+      - receive
+      - /data/in
+
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
+
       IPC_SOCKET_PATH: /tmp/proto_ipc.sock
       UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
+
       RECEIVE_DIR: /data/in
+
     volumes:
       - ./data/in:/data/in
+
+    # These must be published so another physical PC
+    # can reach the RX Receivers.
     ports:
       - "9000:9000/udp"
       - "9001:9001/udp"
       - "9002:9002/udp"
+
     networks:
       - uniflow_net
 
   tx_machine:
-    profiles: ["all", "tx"]
+    profiles:
+      - all
+      - tx
+      - tx-external
+
     build:
       context: ..
       dockerfile: devops/uniflow.Dockerfile
-    command: ["send", "/data/out", "router"]
+
+    # Normally ROUTER_HOST defaults to our Docker router.
+    #
+    # With profile tx-external you can provide the IP
+    # of a real/instructor router instead.
+    command:
+      - send
+      - /data/out
+      - "${ROUTER_HOST:-router}"
+
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
+
       IPC_SOCKET_PATH: /tmp/proto_ipc.sock
       UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
+
       UNIFLOW_WATCH_POLLING: "1.0"
       UNIFLOW_MAX_FILE_BYTES: "1073741824"
+
       UNIFLOW_FEC_REPAIR_PERCENT: "${UNIFLOW_FEC_REPAIR_PERCENT:-20}"
       UNIFLOW_SEND_RATE_MBPS: "${UNIFLOW_SEND_RATE_MBPS:-25}"
+
     volumes:
       - ./data/out:/data/out
+
     networks:
       - uniflow_net
-    depends_on:
-      - router
 
 networks:
   uniflow_net:
