@@ -1,7 +1,7 @@
 import os
 
 ROUTER_IP = "0.0.0.0"
-RX_HOST = "rx_machine"
+RX_HOST = os.environ.get("RX_HOST", "rx_machine")
 
 
 def _env_int(name: str, default: int) -> int:

@@ -91,6 +91,17 @@ def apply_bit_flip(data: bytes) -> tuple[bytes, int, int]:
     return bytes(changed), byte_index, bit_index
 
 
+def resolve_rx_host(host: str) -> str:
+    while True:
+        try:
+            address = socket.gethostbyname(host)
+            logger.info("forwarding packets to RX host %s (%s)", host, address)
+            return address
+        except socket.gaierror:
+            logger.info("waiting for RX host %s to become resolvable...", host)
+            time.sleep(0.5)
+
+
 def start_router() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     random.seed(RANDOM_SEED)
@@ -112,7 +123,7 @@ def start_router() -> None:
 
     send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     send_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16 * 1024 * 1024)
-    rx_addr = socket.gethostbyname(RX_HOST)
+    rx_addr = resolve_rx_host(RX_HOST)
 
     stats = RouterStats()
     last_stats = time.monotonic()

@@ -10,8 +10,15 @@ KEEP_RUNNING=0
 CHAOS="none"
 INCLUDE_1GB=0
 
+compose() {
+  docker compose \
+    -f "$ROOT/docker-compose.yaml" \
+    --profile all \
+    "$@"
+}
+
 usage() {
-  cat <<'EOF'
+  cat <<'HELP'
 Usage: run-transfer-test.sh [options]
 
 Options:
@@ -25,7 +32,7 @@ Options:
   --include-1gb     Also generate and verify the 1 GiB fixture
   --timeout SEC     Verification timeout (default: 3600)
   -h, --help        Show this help
-EOF
+HELP
 }
 
 while [[ $# -gt 0 ]]; do
@@ -60,18 +67,13 @@ done
 
 clean_data_dir() {
   local dir=$1
-
   mkdir -p "$dir"
-
-  find "$dir" \
-    -mindepth 1 \
-    ! -name '.gitkeep' \
-    -print0 | xargs -0 -r rm -rf
+  find "$dir" -mindepth 1 ! -name '.gitkeep' -print0 | xargs -0 -r rm -rf
 }
 
 teardown() {
   if [[ "$KEEP_RUNNING" -eq 0 ]]; then
-    docker compose -f "$ROOT/docker-compose.yaml" down
+    compose down
   fi
 }
 
@@ -84,51 +86,39 @@ wait_for_services() {
     local tx_senders
     local rx_receivers
 
-    tx_logs="$(
-      docker compose \
-        -f "$ROOT/docker-compose.yaml" \
-        logs tx_machine 2>&1 || true
-    )"
-
-    rx_logs="$(
-      docker compose \
-        -f "$ROOT/docker-compose.yaml" \
-        logs rx_machine 2>&1 || true
-    )"
-
-    tx_senders="$(
-      grep -c "Started send worker" <<<"$tx_logs" || true
-    )"
-
-    rx_receivers="$(
-      grep -c "Started recv worker" <<<"$rx_logs" || true
-    )"
+    tx_logs="$(compose logs tx_machine 2>&1 || true)"
+    rx_logs="$(compose logs rx_machine 2>&1 || true)"
+    tx_senders="$(grep -c "Started send worker" <<<"$tx_logs" || true)"
+    rx_receivers="$(grep -c "Started recv worker" <<<"$rx_logs" || true)"
 
     if [[ "$tx_senders" -ge 3 && "$rx_receivers" -ge 3 ]] \
       && grep -q "Watching folder:" <<<"$tx_logs" \
       && grep -q "Receiving files into:" <<<"$rx_logs"; then
-
       echo "All required TX/RX processes are running."
       echo "TX Senders: $tx_senders"
       echo "RX Receivers: $rx_receivers"
-
       return 0
     fi
 
-    echo \
-      "Waiting for services... ($attempt/120) " \
-      "- senders=$tx_senders receivers=$rx_receivers"
-
+    echo "Waiting for services... ($attempt/120) - senders=$tx_senders receivers=$rx_receivers"
     sleep 1
   done
 
   echo "Timed out waiting for the required processes." >&2
-
-  docker compose \
-    -f "$ROOT/docker-compose.yaml" \
-    logs >&2 || true
-
+  compose logs >&2 || true
   return 1
+}
+
+wait_for_delete() {
+  local received=$1
+  local timeout=$2
+  local deadline=$((SECONDS + timeout))
+
+  while [[ -e "$received" && "$SECONDS" -lt "$deadline" ]]; do
+    sleep 1
+  done
+
+  [[ ! -e "$received" ]]
 }
 
 export PACKET_LOSS
@@ -143,42 +133,36 @@ case "$CHAOS" in
     MISROUTING="0"
     UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
-
   loss)
     PACKET_LOSS="0.03"
     BIT_FLIP="0"
     MISROUTING="0"
     UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
-
   flip)
     PACKET_LOSS="0"
     BIT_FLIP="0.03"
     MISROUTING="0"
     UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
-
   misroute)
     PACKET_LOSS="0"
     BIT_FLIP="0"
     MISROUTING="0.03"
     UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
-
   mild)
     PACKET_LOSS="0.03"
     BIT_FLIP="0.03"
     MISROUTING="0.03"
     UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
-
   harsh)
     PACKET_LOSS="0.15"
     BIT_FLIP="0.15"
     MISROUTING="0.15"
     UNIFLOW_FEC_REPAIR_PERCENT="50"
     ;;
-
   *)
     echo "unknown chaos mode: $CHAOS" >&2
     exit 1
@@ -189,31 +173,21 @@ trap teardown EXIT
 
 clean_data_dir "$OUT_DIR"
 clean_data_dir "$IN_DIR"
-
 cd "$ROOT"
 
-echo "Starting Docker Compose (chaos=$CHAOS)..."
-
-docker compose up -d --build
-
+echo "Starting Docker Compose all-in-one profile (chaos=$CHAOS)..."
+compose up -d --build
 wait_for_services
 
 echo "Generating deterministic transfer fixtures..."
-
 GEN_ARGS=(--out-dir "$OUT_DIR")
-
 if [[ "$INCLUDE_1GB" -eq 1 ]]; then
   GEN_ARGS+=(--include-1gb)
 fi
-
-python \
-  "$SCRIPTS/generate_test_files.py" \
-  "${GEN_ARGS[@]}"
+python "$SCRIPTS/generate_test_files.py" "${GEN_ARGS[@]}"
 
 echo "Verifying transfers with SHA-256..."
-
-if python \
-  "$SCRIPTS/verify_transfers.py" \
+if python "$SCRIPTS/verify_transfers.py" \
   --receive-dir "$IN_DIR" \
   --sidecar "$OUT_DIR/.manifest.sha256" \
   --wait \
@@ -221,18 +195,24 @@ if python \
 
   echo "Initial transfer suite passed."
   echo "Testing file modification..."
-
-  python \
-    "$SCRIPTS/test_modification.py" \
+  python "$SCRIPTS/test_modification.py" \
     --source "$OUT_DIR/tiny.txt" \
     --received "$IN_DIR/tiny.txt" \
     --timeout-sec 300
 
-  echo "Transfer and modification tests passed."
+  echo "Modification test passed."
+  echo "Testing file deletion..."
+  rm -f "$OUT_DIR/tiny.txt"
 
-  docker compose \
-    -f "$ROOT/docker-compose.yaml" \
-    logs router | tail -n 40 || true
+  if ! wait_for_delete "$IN_DIR/tiny.txt" 60; then
+    echo "Timed out waiting for deleted RX file to disappear." >&2
+    compose logs tx_machine rx_machine >&2 || true
+    exit 1
+  fi
+
+  echo "Deletion test passed."
+  echo "Transfer, modification and deletion tests passed."
+  compose logs router | tail -n 40 || true
 
   if [[ "$KEEP_RUNNING" -eq 1 ]]; then
     trap - EXIT
@@ -243,9 +223,5 @@ if python \
 fi
 
 echo "Transfer test failed." >&2
-
-docker compose \
-  -f "$ROOT/docker-compose.yaml" \
-  logs >&2 || true
-
+compose logs >&2 || true
 exit 1
