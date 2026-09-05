@@ -83,18 +83,21 @@ services:
       UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
 
       UNIFLOW_WATCH_POLLING: "1.0"
+
       UNIFLOW_MAX_FILE_BYTES: "1073741824"
 
-      # TX sees the same configured destructive faults as the bundled router.
-      # If UNIFLOW_FEC_REPAIR_PERCENT is not explicitly supplied, Python
-      # automatically chooses a repair percentage from loss + bit-flip rates.
       PACKET_LOSS: "${PACKET_LOSS:-0.03}"
       BIT_FLIP: "${BIT_FLIP:-0.03}"
+
       UNIFLOW_FEC_REPAIR_PERCENT: "${UNIFLOW_FEC_REPAIR_PERCENT:-}"
 
-      # Conservative physical-PC default.
-      # Three Senders -> roughly 24 Mbps aggregate before FEC.
-      UNIFLOW_SEND_RATE_MBPS: "${UNIFLOW_SEND_RATE_MBPS:-8}"
+      # Each Sender is limited independently.
+      #
+      # 6 Mbps * 3 workers ~= 18 Mbps aggregate.
+      #
+      # This is intentionally conservative while we
+      # prove large transfers are reliable.
+      UNIFLOW_SEND_RATE_MBPS: "${UNIFLOW_SEND_RATE_MBPS:-6}"
 
     volumes:
       - ./data/out:/data/out

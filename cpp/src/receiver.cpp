@@ -19,63 +19,105 @@
 namespace uniflow_net {
 namespace {
 
+// This queue absorbs temporary bursts.
+//
+// IMPORTANT:
+// The UDP receive loop must never wait for Python / RaptorQ.
+// If it waits, the Linux UDP buffer can overflow and silently
+// throw packets away.
 constexpr std::size_t kForwardQueueMaxBytes =
-    64ULL * 1024ULL * 1024ULL;
+    128ULL * 1024ULL * 1024ULL;
 
 
 class PacketQueue {
 public:
-    void push(std::string payload) {
+    bool try_push(std::string payload) {
         const std::size_t payload_size = payload.size();
 
-        std::unique_lock<std::mutex> lock(mutex_);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        not_full_.wait(
-            lock,
-            [&] {
-                return queued_bytes_ + payload_size
-                    <= kForwardQueueMaxBytes;
-            });
+            if (
+                queued_bytes_ + payload_size
+                > kForwardQueueMaxBytes
+            ) {
+                return false;
+            }
 
-        queued_bytes_ += payload_size;
-        packets_.push_back(std::move(payload));
+            queued_bytes_ += payload_size;
 
-        lock.unlock();
+            packets_.push_back(
+                std::move(payload)
+            );
+
+            if (
+                queued_bytes_
+                > highest_queued_bytes_
+            ) {
+                highest_queued_bytes_ =
+                    queued_bytes_;
+            }
+        }
+
         not_empty_.notify_one();
+
+        return true;
     }
 
 
     std::string pop() {
-        std::unique_lock<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(
+            mutex_
+        );
 
         not_empty_.wait(
             lock,
             [&] {
                 return !packets_.empty();
-            });
+            }
+        );
 
         std::string payload =
-            std::move(packets_.front());
+            std::move(
+                packets_.front()
+            );
 
         packets_.pop_front();
-        queued_bytes_ -= payload.size();
 
-        lock.unlock();
-        not_full_.notify_one();
+        queued_bytes_ -=
+            payload.size();
 
         return payload;
     }
 
 
+    std::size_t queued_bytes() const {
+        std::lock_guard<std::mutex> lock(
+            mutex_
+        );
+
+        return queued_bytes_;
+    }
+
+
+    std::size_t highest_queued_bytes() const {
+        std::lock_guard<std::mutex> lock(
+            mutex_
+        );
+
+        return highest_queued_bytes_;
+    }
+
+
 private:
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
 
     std::condition_variable not_empty_;
-    std::condition_variable not_full_;
 
     std::deque<std::string> packets_;
 
     std::size_t queued_bytes_ = 0;
+    std::size_t highest_queued_bytes_ = 0;
 };
 
 
@@ -88,7 +130,9 @@ int create_udp_listener(int port) {
 
     if (fd < 0) {
         throw std::runtime_error(
-            std::string("UDP socket failed: ")
+            std::string(
+                "UDP socket failed: "
+            )
             + std::strerror(errno)
         );
     }
@@ -103,31 +147,60 @@ int create_udp_listener(int port) {
         sizeof(enabled)
     );
 
-    int receive_buffer =
-        32 * 1024 * 1024;
+    // Request a large kernel UDP buffer.
+    //
+    // Linux may give us less depending on system limits,
+    // so we read it back and print the real value.
+    int requested_buffer =
+        64 * 1024 * 1024;
 
     ::setsockopt(
         fd,
         SOL_SOCKET,
         SO_RCVBUF,
-        &receive_buffer,
-        sizeof(receive_buffer)
+        &requested_buffer,
+        sizeof(requested_buffer)
     );
+
+    int actual_buffer = 0;
+    socklen_t buffer_length =
+        sizeof(actual_buffer);
+
+    ::getsockopt(
+        fd,
+        SOL_SOCKET,
+        SO_RCVBUF,
+        &actual_buffer,
+        &buffer_length
+    );
+
+    std::cerr
+        << "UDP receive buffer requested="
+        << requested_buffer
+        << " actual="
+        << actual_buffer
+        << '\n';
 
     sockaddr_in address{};
 
     address.sin_family = AF_INET;
+
     address.sin_addr.s_addr =
         htonl(INADDR_ANY);
 
-    address.sin_port = htons(
-        static_cast<std::uint16_t>(port)
-    );
+    address.sin_port =
+        htons(
+            static_cast<std::uint16_t>(
+                port
+            )
+        );
 
     if (
         ::bind(
             fd,
-            reinterpret_cast<sockaddr*>(&address),
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
             sizeof(address)
         ) < 0
     ) {
@@ -137,7 +210,8 @@ int create_udp_listener(int port) {
         ::close(fd);
 
         throw std::runtime_error(
-            "UDP bind failed: " + message
+            "UDP bind failed: "
+            + message
         );
     }
 
@@ -165,13 +239,16 @@ void forward_with_reconnect(
             );
 
             return;
-
-        } catch (const std::exception&) {
+        }
+        catch (const std::exception&) {
             ::close(manager_fd);
+
             manager_fd = -1;
 
             std::this_thread::sleep_for(
-                std::chrono::milliseconds(50)
+                std::chrono::milliseconds(
+                    50
+                )
             );
         }
     }
@@ -230,9 +307,12 @@ int run_receiver() {
 
     PacketQueue forward_queue;
 
-    // The UDP receive loop and the UDS forwarding loop are deliberately
-    // separated. Python/RaptorQ may pause while decoding a block, but the
-    // Receiver should continue draining UDP into this in-memory queue.
+    // One thread ONLY receives UDP.
+    //
+    // Another thread sends packets to Python.
+    //
+    // This is the important separation learned from Claude's
+    // implementation.
     std::thread writer(
         forward_packets,
         std::ref(forward_queue),
@@ -253,7 +333,9 @@ int run_receiver() {
     std::array<char, 65535> buffer{};
 
     std::uint64_t received = 0;
-    std::uint64_t rejected = 0;
+    std::uint64_t queued = 0;
+    std::uint64_t invalid = 0;
+    std::uint64_t queue_overrun = 0;
 
     while (true) {
         const ssize_t size =
@@ -279,9 +361,13 @@ int run_receiver() {
             );
         }
 
+        ++received;
+
         std::string payload(
             buffer.data(),
-            static_cast<std::size_t>(size)
+            static_cast<std::size_t>(
+                size
+            )
         );
 
         uniflow::FilePacket packet;
@@ -291,27 +377,63 @@ int run_receiver() {
                 payload
             )
         ) {
-            ++rejected;
+            ++invalid;
             continue;
         }
 
-        // Intentionally do NOT reject based on target_receiver().
-        // A router misroute is still useful because every Receiver ultimately
-        // forwards valid packets to the same Session Manager.
-        forward_queue.push(
-            std::move(payload)
-        );
+        // Do NOT reject packets because target_receiver
+        // does not match this worker.
+        //
+        // The project router may intentionally misroute
+        // packets. Every Receiver eventually reaches the
+        // same Session Manager.
+        if (
+            !forward_queue.try_push(
+                std::move(payload)
+            )
+        ) {
+            // This is MUCH better than silently blocking
+            // recvfrom().
+            //
+            // RaptorQ may recover a small number of these,
+            // and most importantly we can now SEE whether
+            // our own program is dropping data.
+            ++queue_overrun;
 
-        ++received;
+            if (
+                queue_overrun == 1
+                || queue_overrun % 1000 == 0
+            ) {
+                std::cerr
+                    << "WARNING: Receiver "
+                    << worker
+                    << " processing queue full. "
+                    << "Local dropped packets="
+                    << queue_overrun
+                    << '\n';
+            }
+
+            continue;
+        }
+
+        ++queued;
 
         if (received % 1000 == 0) {
             std::cerr
                 << "Receiver "
                 << worker
-                << " queued "
+                << " received="
                 << received
-                << " packets; rejected="
-                << rejected
+                << " queued="
+                << queued
+                << " invalid="
+                << invalid
+                << " local_drops="
+                << queue_overrun
+                << " queue_bytes="
+                << forward_queue.queued_bytes()
+                << " queue_highest="
+                << forward_queue.highest_queued_bytes()
                 << " current_file="
                 << packet.file_id()
                 << '\n';
