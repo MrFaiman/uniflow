@@ -26,6 +26,11 @@ def get_worker_count() -> int:
 
 
 def get_poll_interval() -> float:
+    """Interval used between File Monitor processing passes.
+
+    With watchdog enabled, filesystem events wake the loop early; this value
+    is the maximum wait used to re-check pending (still-writing) files.
+    """
     polling = float(os.getenv("UNIFLOW_WATCH_POLLING", str(DEFAULT_POLL_INTERVAL)))
     if polling <= 0:
         raise ValueError("UNIFLOW_WATCH_POLLING must be greater than 0")

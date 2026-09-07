@@ -714,7 +714,7 @@ Delete messages are sent through all three Sender paths for additional redundanc
 | `ROUTER_HOST`                |     `router` | Router hostname/IP        |
 | `UNIFLOW_FEC_REPAIR_PERCENT` |         `20` | RaptorQ repair percentage |
 | `UNIFLOW_SEND_RATE_MBPS`     |         `25` | UDP pacing per Sender     |
-| `UNIFLOW_WATCH_POLLING`      |        `1.0` | Monitor polling interval  |
+| `UNIFLOW_WATCH_POLLING`      |        `1.0` | Max wait between monitor passes (events wake early) |
 | `UNIFLOW_MAX_FILE_BYTES`     | `1073741824` | Maximum file size         |
 
 ## Shared endpoint settings
@@ -725,6 +725,7 @@ Delete messages are sent through all three Sender paths for additional redundanc
 | `UNIFLOW_WORKERS`    |                          `3` | Worker count  |
 | `IPC_SOCKET_PATH`    |        `/tmp/proto_ipc.sock` | UDS base path |
 | `UNIFLOW_NET_BINARY` | `/usr/local/bin/uniflow-net` | C++ runtime   |
+| `UNIFLOW_LOG_FILE`   | *(unset)* | Optional C++ log file path (stderr always used) |
 
 Workers use:
 
@@ -869,13 +870,40 @@ The Linux Docker runtime supports Unix Domain Sockets.
 
 ## C++ build
 
+Requires Clang with C++26 support (Clang 19+ / Apple Clang 16+), CMake 3.28+, Protobuf, and Git
+(for FetchContent of argparse and Catch2).
+
 ```bash
 cmake \
   -S cpp \
   -B cpp/build \
-  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DUNIFLOW_BUILD_TESTS=ON
 
 cmake --build cpp/build --parallel
+ctest --test-dir cpp/build --output-on-failure
+```
+
+On Linux, prefer Clang 19 explicitly:
+
+```bash
+cmake \
+  -S cpp \
+  -B cpp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=clang++-19 \
+  -DUNIFLOW_BUILD_TESTS=ON
+```
+
+On macOS with Homebrew Protobuf / Abseil (Apple Clang is used by default):
+
+```bash
+cmake \
+  -S cpp \
+  -B cpp/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH="$(brew --prefix);$(brew --prefix protobuf);$(brew --prefix abseil)"
 ```
 
 ---
@@ -889,7 +917,9 @@ uniflow/
 │       └── ci.yml
 ├── cpp/
 │   ├── CMakeLists.txt
-│   └── src/
+│   ├── cmake/
+│   ├── src/
+│   └── tests/
 ├── devops/
 │   ├── docker-compose.yaml
 │   ├── uniflow.Dockerfile
@@ -966,7 +996,7 @@ docker --version
 docker compose version
 ```
 
-Normal execution should not require host Python, `uv`, `protoc`, CMake, or `g++`.
+Normal execution should not require host Python, `uv`, `protoc`, CMake, or `clang++`.
 
 ## Router cannot resolve RX
 

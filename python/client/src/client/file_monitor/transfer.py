@@ -1,8 +1,7 @@
 import socket
-import time
 from pathlib import Path
-from uuid import uuid4
 
+from client.common.ids import new_file_id
 from client.common.ipc import send_message
 from client.common.packet_hash import calculate_packet_hash
 from client.common.paths import relative_path_from_root
@@ -51,7 +50,7 @@ def transfer_delete(
 
     # One logical DELETE version is sent through every Sender path.
     # This gives a tiny control message redundancy without requiring ACKs.
-    file_id = f"{time.time_ns()}:{uuid4()}"
+    file_id = new_file_id()
 
     for sender, connection in enumerate(connections):
         packet = FilePacket()

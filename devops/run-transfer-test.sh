@@ -10,7 +10,18 @@ KEEP_RUNNING=0
 CHAOS="none"
 INCLUDE_1GB=0
 
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+  PYTHON=python
+else
+  echo "error: python3 (or python) is required for fixture generation" >&2
+  exit 127
+fi
+
 compose() {
+  DOCKER_BUILDKIT=1 \
+  COMPOSE_BAKE=true \
   docker compose \
     -f "$ROOT/docker-compose.yaml" \
     --profile all \
@@ -71,6 +82,7 @@ clean_data_dir() {
   find "$dir" -mindepth 1 ! -name '.gitkeep' -print0 | xargs -0 -r rm -rf
 }
 
+# shellcheck disable=SC2329 # invoked via trap EXIT
 teardown() {
   if [[ "$KEEP_RUNNING" -eq 0 ]]; then
     compose down
@@ -184,10 +196,10 @@ GEN_ARGS=(--out-dir "$OUT_DIR")
 if [[ "$INCLUDE_1GB" -eq 1 ]]; then
   GEN_ARGS+=(--include-1gb)
 fi
-python "$SCRIPTS/generate_test_files.py" "${GEN_ARGS[@]}"
+"$PYTHON" "$SCRIPTS/generate_test_files.py" "${GEN_ARGS[@]}"
 
 echo "Verifying transfers with SHA-256..."
-if python "$SCRIPTS/verify_transfers.py" \
+if "$PYTHON" "$SCRIPTS/verify_transfers.py" \
   --receive-dir "$IN_DIR" \
   --sidecar "$OUT_DIR/.manifest.sha256" \
   --wait \
@@ -195,7 +207,7 @@ if python "$SCRIPTS/verify_transfers.py" \
 
   echo "Initial transfer suite passed."
   echo "Testing file modification..."
-  python "$SCRIPTS/test_modification.py" \
+  "$PYTHON" "$SCRIPTS/test_modification.py" \
     --source "$OUT_DIR/tiny.txt" \
     --received "$IN_DIR/tiny.txt" \
     --timeout-sec 300

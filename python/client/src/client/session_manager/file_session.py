@@ -13,7 +13,7 @@ class FileSession:
         self.file_hash = packet.file_hash
         self.total_blocks = packet.total_blocks
 
-        self.decoders = {}
+        self.decoders: dict[int, object] = {}
         self.seen_packets: dict[int, set[int]] = {}
         self.completed_blocks: set[int] = set()
 

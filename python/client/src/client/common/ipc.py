@@ -30,3 +30,32 @@ def send_message(connection: socket.socket, data: bytes) -> None:
 
     connection.sendall(struct.pack("!I", len(data)))
     connection.sendall(data)
+
+
+def receive_exactly(connection: socket.socket, size: int) -> bytes | None:
+    data = bytearray()
+
+    while len(data) < size:
+        chunk = connection.recv(size - len(data))
+        if not chunk:
+            if not data:
+                return None
+            raise ConnectionError("connection closed during a message")
+        data.extend(chunk)
+
+    return bytes(data)
+
+
+def receive_message(connection: socket.socket) -> bytes | None:
+    size_data = receive_exactly(connection, 4)
+    if size_data is None:
+        return None
+
+    message_size = struct.unpack("!I", size_data)[0]
+    if message_size == 0 or message_size > MAX_MESSAGE_SIZE:
+        raise ValueError("invalid message size")
+
+    message = receive_exactly(connection, message_size)
+    if message is None:
+        raise ConnectionError("connection closed before message data")
+    return message

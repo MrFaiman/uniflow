@@ -2,7 +2,7 @@
 
 namespace uniflow_net {
 
-int run_sender();
-int run_receiver();
+[[noreturn]] void run_sender();
+[[noreturn]] void run_receiver();
 
 }  // namespace uniflow_net

@@ -4,59 +4,204 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
 
 jobs:
-  cpp-build:
-    name: C++ Sender/Receiver build
-    runs-on: ubuntu-latest
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      cpp: ${{ steps.filter.outputs.cpp }}
+      python: ${{ steps.filter.outputs.python }}
+      devops: ${{ steps.filter.outputs.devops }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install C++ dependencies
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            cpp:
+              - 'cpp/**'
+              - 'proto/**'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'python/**'
+              - 'proto/**'
+              - 'scripts/generate-proto.sh'
+              - '.github/workflows/ci.yml'
+            devops:
+              - 'devops/**'
+              - 'cpp/**'
+              - 'python/**'
+              - 'proto/**'
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+
+  cpp-build:
+    name: C++ build and test
+    needs: changes
+    if: >-
+      needs.changes.outputs.cpp == 'true'
+      || github.ref == 'refs/heads/main'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache LLVM/Clang 19
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm
+          key: llvm-19-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install LLVM/Clang 19
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "19"
+          directory: ${{ runner.temp }}/llvm
+          cached: ${{ steps.cache-llvm.outputs.cache-hit }}
+
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libprotobuf-dev protobuf-compiler
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            libprotobuf-dev \
+            protobuf-compiler
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: uniflow-cpp-clang19-${{ runner.os }}
+          max-size: 500M
+
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: cpp/build/_deps
+          key: fetchcontent-${{ hashFiles('cpp/cmake/Dependencies.cmake') }}-${{ runner.os }}
+
       - name: Configure
-        run: cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S cpp -B cpp/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DUNIFLOW_BUILD_TESTS=ON
+
       - name: Build
-        run: cmake --build cpp/build --parallel
+        run: cmake --build cpp/build
+
+      - name: Test
+        run: ctest --test-dir cpp/build --output-on-failure --parallel 4
+
+      - name: Package uniflow-net
+        run: |
+          mkdir -p dist
+          cp cpp/build/uniflow-net dist/uniflow-net
+          clang++ --version > dist/compiler.txt
+          ./dist/uniflow-net --help > dist/help.txt
+
+      - name: Upload uniflow-net artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniflow-net-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 14 }}
 
   python-tests:
-    name: Python File Monitor / Session Manager
-    runs-on: ubuntu-latest
+    name: Python lint and test
+    needs: changes
+    if: >-
+      needs.changes.outputs.python == 'true'
+      || github.ref == 'refs/heads/main'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          cache-dependency-glob: python/client/uv.lock
+
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
           version: "35.1"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Generate Python Protobuf
         run: bash scripts/generate-proto.sh python
+
       - name: Install dependencies
         working-directory: python/client
-        run: uv sync --all-groups
-      - name: Ruff
+        run: uv sync --all-groups --frozen
+
+      - name: Ruff check
         working-directory: python/client
         run: uv run ruff check src tests
+
+      - name: Ruff format
+        working-directory: python/client
+        run: uv run ruff format --check src tests
+
       - name: Pytest
         working-directory: python/client
-        run: uv run pytest
+        run: uv run pytest -q
 
   devops-tests:
-    name: DevOps helper tests
-    runs-on: ubuntu-latest
+    name: DevOps validate and helpers
+    needs: changes
+    if: >-
+      needs.changes.outputs.devops == 'true'
+      || github.ref == 'refs/heads/main'
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - name: Install pytest
-        run: python -m pip install pytest
-      - name: Test fixture helpers
-        run: python -m pytest devops/scripts/test_transfer_fixtures.py
+        run: python -m pip install --disable-pip-version-check pytest
+
+      - name: Validate Compose files
+        working-directory: devops
+        run: |
+          docker compose -f docker-compose.yaml config --quiet
+          docker compose -f docker-compose.yaml --profile all config --quiet
+          docker compose -f docker-compose.yaml --profile tx config --quiet
+          docker compose -f docker-compose.yaml --profile rx config --quiet
+          docker compose -f docker-compose.yaml --profile tx-external config --quiet
+
+      - name: Test fixture helpers and router CLI
+        run: python -m pytest -q devops/scripts/test_transfer_fixtures.py devops/router/test_router.py
+
+      - name: Lint entrypoint shell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck devops/entrypoint.sh devops/run-transfer-test.sh

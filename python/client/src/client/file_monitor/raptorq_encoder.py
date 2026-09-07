@@ -1,17 +1,18 @@
 import math
-import time
+from collections.abc import Iterator
 from pathlib import Path
-from uuid import uuid4
 
 from raptorq import Encoder
 
 from client.common.config import get_max_file_bytes, get_repair_percent
 from client.common.hash_utils import calculate_sha256
-from client.transfer_pb2 import FilePacket
-
-SYMBOL_SIZE = 1024
-BLOCK_SIZE = 1024 * 1024
-MIN_REPAIR_PACKETS = 16
+from client.common.ids import new_file_id
+from client.common.transfer_limits import (
+    BLOCK_SIZE,
+    MIN_REPAIR_PACKETS,
+    SYMBOL_SIZE,
+)
+from client.transfer_pb2 import WRITE, FilePacket
 
 
 def _repair_packet_count(block_size: int, repair_percent: int) -> int:
@@ -37,13 +38,14 @@ def _fill_common_metadata(
     packet.file_hash = file_hash
     packet.total_blocks = total_blocks
     packet.symbol_size = SYMBOL_SIZE
+    packet.operation = WRITE
 
 
 def encode_file(
     file: Path,
     relative_path: str | None = None,
     repair_percent: int | None = None,
-):
+) -> Iterator[FilePacket]:
     file_size = file.stat().st_size
     max_size = get_max_file_bytes()
     if file_size > max_size:
@@ -54,7 +56,7 @@ def encode_file(
     if repair_percent is None:
         repair_percent = get_repair_percent()
 
-    file_id = f"{time.time_ns()}:{uuid4()}"
+    file_id = new_file_id()
     file_hash = calculate_sha256(file)
 
     if file_size == 0:

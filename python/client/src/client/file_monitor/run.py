@@ -9,8 +9,8 @@ from client.common.config import (
     get_worker_count,
 )
 from client.common.ipc import connect_to_server
+from client.common.transfer_limits import SMALL_FILE_LIMIT
 from client.file_monitor.monitor import FileMonitor
-from client.file_monitor.packet_router import SMALL_FILE_LIMIT
 from client.file_monitor.transfer import transfer_delete, transfer_file
 from client.supervisor import SenderSupervisor
 
@@ -84,6 +84,7 @@ def monitor_files(
 ) -> None:
     workers = len(connections)
     max_size = get_max_file_bytes()
+    poll_interval = get_poll_interval()
 
     while True:
         supervisor.check()
@@ -134,7 +135,8 @@ def monitor_files(
                 print(f"Transfer failed for {file}: {error}", flush=True)
             supervisor.check()
 
-        time.sleep(get_poll_interval())
+        # Wake early on filesystem events; otherwise re-check pending stability.
+        monitor.wait(poll_interval)
 
 
 def run_file_monitor(watch_folder: Path, router_host: str) -> None:
@@ -142,7 +144,7 @@ def run_file_monitor(watch_folder: Path, router_host: str) -> None:
     watch_folder.mkdir(parents=True, exist_ok=True)
 
     workers = get_worker_count()
-    monitor = FileMonitor(watch_folder, workers)
+    monitor = FileMonitor(watch_folder, workers, use_watchdog=True)
     supervisor = SenderSupervisor(router_host)
     connections: list[socket.socket] = []
 
@@ -157,4 +159,4 @@ def run_file_monitor(watch_folder: Path, router_host: str) -> None:
         for connection in connections:
             connection.close()
         supervisor.stop()
-
+        monitor.stop()

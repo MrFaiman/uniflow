@@ -2,15 +2,29 @@
 
 Run all commands from this directory.
 
+## Profiles
+
+| Profile | Services |
+|---------|----------|
+| `all` | router + tx_machine + rx_machine |
+| `tx` | router + tx_machine |
+| `rx` | rx_machine |
+| `tx-external` | tx_machine only (point `ROUTER_HOST` at an external router) |
+
 ## Start
 
 ```bash
-docker compose up --build
+docker compose --profile all up --build
 ```
 
 The TX container runs one Python File Monitor plus three independent C++ Sender processes. The RX container runs one Python Session Manager plus three independent C++ Receiver processes.
 
 Ports are 9000, 9001 and 9002. Local IPC uses Unix Domain Sockets. Network traffic is UDP and only flows TX -> Router -> RX.
+
+Build notes:
+
+- Images use BuildKit cache mounts and a multi-stage Dockerfile (Clang 19 C++ worker + uv-managed Python).
+- Prefer `DOCKER_BUILDKIT=1` (enabled by default in recent Docker Desktop).
 
 ## Zero-fault proof
 
@@ -44,11 +58,12 @@ sha256sum data/out/example.bin data/in/example.bin
 ## Useful runtime evidence
 
 ```bash
-docker compose top tx_machine
-docker compose top rx_machine
-docker compose logs tx_machine
-docker compose logs rx_machine
-docker compose logs router
+docker compose --profile all top tx_machine
+docker compose --profile all top rx_machine
+docker compose --profile all logs tx_machine
+docker compose --profile all logs rx_machine
+docker compose --profile all logs router
+docker compose --profile all ps
 ```
 
 You should see three Sender workers and three Receiver workers, not merely `UNIFLOW_WORKERS=3` in configuration.

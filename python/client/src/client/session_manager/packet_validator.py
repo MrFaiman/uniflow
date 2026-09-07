@@ -3,9 +3,8 @@ from string import ascii_letters, digits, hexdigits
 from client.common.config import get_max_file_bytes, get_worker_count
 from client.common.packet_hash import calculate_packet_hash
 from client.common.paths import normalize_relative_path
+from client.common.transfer_limits import MAX_BLOCK_SIZE, MAX_SYMBOL_SIZE
 from client.transfer_pb2 import DELETE, WRITE, FilePacket
-
-MAX_BLOCK_SIZE = 2 * 1024 * 1024
 
 
 def _is_sha256(value: str) -> bool:
@@ -76,7 +75,7 @@ def packet_is_valid(packet: FilePacket) -> bool:
         return False
     if packet.block_size == 0 or packet.block_size > MAX_BLOCK_SIZE:
         return False
-    if packet.symbol_size == 0 or packet.symbol_size > 1400:
+    if packet.symbol_size == 0 or packet.symbol_size > MAX_SYMBOL_SIZE:
         return False
     if packet.block_offset + packet.block_size > packet.file_size:
         return False

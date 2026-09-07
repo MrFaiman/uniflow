@@ -1,27 +1,38 @@
-import struct
 import threading
+from pathlib import Path
+from uuid import uuid4
 
-from client.common.ipc import connect_to_server, create_server, send_message
+from client.common.ipc import (
+    connect_to_server,
+    create_server,
+    receive_message,
+    send_message,
+)
 
 
-def test_unix_socket(tmp_path):
-    socket_path = tmp_path / "test.sock"
+def test_unix_socket():
+    socket_path = Path(f"/tmp/uniflow-test-{uuid4().hex}.sock")
     server = create_server(socket_path)
+    received: list[bytes | None] = []
 
-    def receive_message():
-        connection, _ = server.accept()
-        size_data = connection.recv(4)
-        message_size = struct.unpack("!I", size_data)[0]
-        message = connection.recv(message_size)
-        assert message == b"Hello"
-        connection.close()
+    try:
 
-    thread = threading.Thread(target=receive_message)
-    thread.start()
+        def server_loop() -> None:
+            connection, _ = server.accept()
+            with connection:
+                received.append(receive_message(connection))
+                received.append(receive_message(connection))
 
-    client = connect_to_server(socket_path)
-    send_message(client, b"Hello")
-    client.close()
+        thread = threading.Thread(target=server_loop)
+        thread.start()
 
-    thread.join()
-    server.close()
+        client = connect_to_server(socket_path)
+        send_message(client, b"Hello")
+        client.close()
+
+        thread.join()
+    finally:
+        server.close()
+        socket_path.unlink(missing_ok=True)
+
+    assert received == [b"Hello", None]

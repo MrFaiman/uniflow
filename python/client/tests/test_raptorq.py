@@ -1,6 +1,7 @@
 from raptorq import Decoder
 
-from client.file_monitor.raptorq_encoder import SYMBOL_SIZE, encode_file
+from client.common.transfer_limits import SYMBOL_SIZE
+from client.file_monitor.raptorq_encoder import encode_file
 
 
 def test_raptorq_with_packet_loss(tmp_path):

@@ -1,3 +1,6 @@
+import time
+from pathlib import Path
+
 from client.file_monitor.monitor import FileMonitor
 
 
@@ -52,3 +55,53 @@ def test_failed_transfer_is_retried(tmp_path):
 
     assert monitor.get_changed_files() == []
     assert monitor.get_changed_files() == [file]
+
+
+def test_deleted_file_is_reported(tmp_path):
+    file = tmp_path / "file.txt"
+    file.write_text("Hello")
+    monitor = FileMonitor(tmp_path)
+
+    assert scan_until_changed(monitor) == [file]
+    file.unlink()
+
+    assert monitor.get_changed_files() == []
+    assert monitor.get_deleted_files() == [file.resolve()]
+    monitor.mark_delete_sent(file)
+    assert monitor.get_deleted_files() == []
+
+
+def _wait_for(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.05)
+    raise AssertionError("timed out waiting for watchdog event")
+
+
+def test_watchdog_detects_create_modify_and_delete(tmp_path: Path):
+    monitor = FileMonitor(tmp_path, use_watchdog=True)
+    file = tmp_path / "watched.txt"
+
+    try:
+        file.write_text("one")
+        _wait_for(lambda: file.resolve() in monitor._dirty or monitor.pending)
+
+        assert monitor.get_changed_files() == []
+        assert monitor.get_changed_files() == [file.resolve()]
+
+        file.write_text("two")
+        _wait_for(
+            lambda: (
+                file.resolve() in monitor._dirty or file.resolve() in monitor.pending
+            )
+        )
+        assert monitor.get_changed_files() == []
+        assert monitor.get_changed_files() == [file.resolve()]
+
+        file.unlink()
+        _wait_for(lambda: file.resolve() in monitor.deleted_files)
+        assert monitor.get_deleted_files() == [file.resolve()]
+    finally:
+        monitor.stop()

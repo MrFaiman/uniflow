@@ -1,7 +1,8 @@
 from itertools import zip_longest
 
 from client.common.packet_hash import calculate_packet_hash
-from client.file_monitor.raptorq_encoder import BLOCK_SIZE, encode_file
+from client.common.transfer_limits import BLOCK_SIZE
+from client.file_monitor.raptorq_encoder import encode_file
 from client.session_manager.manager import SessionManager
 
 

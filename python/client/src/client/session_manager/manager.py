@@ -1,10 +1,12 @@
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 from google.protobuf.message import DecodeError
 
 from client.common.hash_utils import calculate_sha256
 from client.common.paths import safe_join
+from client.common.transfer_limits import MAX_FINISHED_SESSIONS
 from client.session_manager.decoder import decode_packet
 from client.session_manager.file_session import FileSession
 from client.session_manager.packet_validator import packet_is_valid
@@ -20,7 +22,7 @@ class SessionManager:
             for stale_part in parts_folder.glob("*.part"):
                 stale_part.unlink(missing_ok=True)
         self.sessions: dict[str, FileSession] = {}
-        self.finished_sessions: set[str] = set()
+        self.finished_sessions: OrderedDict[str, None] = OrderedDict()
         self.latest_version_by_path: dict[str, int] = {}
         self.packet_count = 0
         self.rejected_packets = 0
@@ -86,6 +88,12 @@ class SessionManager:
         if session.is_complete():
             self._finish(session)
 
+    def _mark_finished(self, file_id: str) -> None:
+        self.finished_sessions[file_id] = None
+        self.finished_sessions.move_to_end(file_id)
+        while len(self.finished_sessions) > MAX_FINISHED_SESSIONS:
+            self.finished_sessions.popitem(last=False)
+
     def _maybe_log_packet_stats(self) -> None:
         if self.packet_count % 1000 == 0:
             print(
@@ -104,7 +112,7 @@ class SessionManager:
 
         # A delayed old DELETE must never erase a newer file version.
         if latest is not None and version < latest:
-            self.finished_sessions.add(packet.file_id)
+            self._mark_finished(packet.file_id)
             return
 
         # This acts as a tombstone. Old WRITE packets arriving after the
@@ -124,7 +132,7 @@ class SessionManager:
             print(f"Could not delete {packet.file_name}: {error}", flush=True)
             return
 
-        self.finished_sessions.add(packet.file_id)
+        self._mark_finished(packet.file_id)
 
     def _get_session(self, packet: FilePacket) -> FileSession | None:
         version = self._file_version(packet.file_id)
@@ -162,14 +170,14 @@ class SessionManager:
         for file_id in stale_ids:
             stale = self.sessions.pop(file_id)
             stale.part_path.unlink(missing_ok=True)
-            self.finished_sessions.add(file_id)
+            self._mark_finished(file_id)
             print(f"Discarded older transfer for {file_name}", flush=True)
 
     def _finish(self, session: FileSession) -> None:
         version = self._file_version(session.file_id)
         if self.latest_version_by_path.get(session.file_name) != version:
             session.part_path.unlink(missing_ok=True)
-            self.finished_sessions.add(session.file_id)
+            self._mark_finished(session.file_id)
             self.sessions.pop(session.file_id, None)
             return
 
@@ -183,6 +191,5 @@ class SessionManager:
             session.part_path.unlink(missing_ok=True)
             print(f"FAILED: {session.file_name} - HASH MISMATCH", flush=True)
 
-        self.finished_sessions.add(session.file_id)
+        self._mark_finished(session.file_id)
         self.sessions.pop(session.file_id, None)
-
