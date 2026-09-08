@@ -80,8 +80,11 @@ int main(int argc, char** argv) {
     }
 
     try {
+        uniflow_net::install_shutdown_handlers();
         configure_logging(program);
         return dispatch(program);
+    } catch (const uniflow_net::ShutdownRequested&) {
+        return 0;
     } catch (const std::exception& error) {
         uniflow_net::log_error("fatal: {}", error.what());
         return 1;

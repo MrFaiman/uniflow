@@ -28,4 +28,4 @@ target_compile_options(
 )
 
 include(Catch)
-catch_discover_tests(uniflow_net_tests)
+catch_discover_tests(uniflow_net_tests DISCOVERY_MODE PRE_TEST)

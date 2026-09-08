@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .test-data/
 cpp/build/
+cpp/build-coverage/
 cpp/generated/
 devops/data/in/*
 devops/data/out/*

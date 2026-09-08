@@ -20,3 +20,25 @@ uniflow recv
 ```
 
 For the complete architecture, Docker commands and end-to-end tests, see the repository-level `README.md`.
+
+Run the test suite from this directory:
+
+```bash
+uv run pytest
+```
+
+Tests report line and branch coverage for the `client` package in the terminal
+and generate an HTML report at `htmlcov/index.html`. Generated Protobuf modules
+are excluded. Run `uv run pytest --no-cov` to disable coverage for a test run.
+
+GitHub Actions uploads the HTML report from the Python test job as
+`python-coverage`, retained for seven days. Download and extract the artifact,
+then open `index.html`. This job excludes compiled worker and worker CLI tests,
+which run separately in the C++ build jobs.
+
+To include compiled worker integration tests, build the C++ worker first, then
+run:
+
+```bash
+UNIFLOW_NET_BINARY=../../cpp/build/uniflow-net uv run pytest
+```

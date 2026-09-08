@@ -1,0 +1,79 @@
+name: Python CI
+
+on:
+  workflow_call:
+    inputs:
+      uv-version:
+        description: uv version used by CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python-tests:
+    name: Python lint and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: python/client/uv.lock
+          cache-suffix: python
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3.0.0
+        with:
+          version: "35.1"
+          repo-token: ${{ github.token }}
+
+      - name: Verify generated Python Protobuf is current
+        run: |
+          bash scripts/generate-proto.sh python
+          git diff --exit-code -- python/client/src/client/transfer_pb2.py
+
+      - name: Install dependencies
+        working-directory: python/client
+        run: uv sync --all-groups --frozen
+
+      - name: Ruff check
+        working-directory: python/client
+        run: uv run --frozen ruff check src tests
+
+      - name: Ruff format
+        working-directory: python/client
+        run: uv run --frozen ruff format --check src tests
+
+      - name: Pytest
+        working-directory: python/client
+        run: uv run --frozen pytest -q --ignore=tests/test_workers.py --ignore=tests/test_worker_cli.py --junitxml=../../reports/python.xml
+
+      - name: Upload Python coverage report
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: python-coverage
+          path: python/client/htmlcov/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Python test reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: python-reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7

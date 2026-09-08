@@ -18,10 +18,6 @@ defaults:
   run:
     shell: bash
 
-env:
-  CMAKE_BUILD_PARALLEL_LEVEL: "4"
-  UV_VERSION: "0.12.5"
-
 jobs:
   changes:
     name: Detect changes
@@ -78,263 +74,31 @@ jobs:
             rhysd/actionlint:1.7.12 -color .github/workflows/*.yml
 
   cpp-build:
-    name: C++ (${{ matrix.name }})
+    name: C++
     needs: changes
     if: needs.changes.outputs.cpp == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: gcc14
-            compiler: g++-14
-            package: g++-14
-          - name: clang19
-            compiler: clang++-19
-            package: clang-19
-    env:
-      CXX: ${{ matrix.compiler }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install build dependencies
-        env:
-          COMPILER_PACKAGE: ${{ matrix.package }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            "$COMPILER_PACKAGE" cmake ninja-build libprotobuf-dev protobuf-compiler
-
-      - name: Setup ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
-        with:
-          key: uniflow-${{ runner.os }}-${{ runner.arch }}-${{ matrix.name }}
-          max-size: 500M
-
-      - name: Cache FetchContent dependencies
-        uses: actions/cache@v6.1.0
-        with:
-          path: cpp/build/_deps
-          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ matrix.name }}-${{ hashFiles('cpp/cmake/Dependencies.cmake') }}
-
-      - name: Configure
-        run: |
-          cmake -S cpp -B cpp/build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER="$CXX" \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DUNIFLOW_BUILD_TESTS=ON
-
-      - name: Build
-        run: cmake --build cpp/build
-
-      - name: CTest
-        run: |
-          mkdir -p reports
-          ctest --test-dir cpp/build --output-on-failure --parallel 4 \
-            --output-junit "$GITHUB_WORKSPACE/reports/ctest.xml"
-
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          version: ${{ env.UV_VERSION }}
-          python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: python/client/uv.lock
-          cache-suffix: ${{ matrix.name }}
-
-      - name: Test compiled workers and supervisor lifecycle
-        working-directory: python/client
-        env:
-          UNIFLOW_NET_BINARY: ${{ github.workspace }}/cpp/build/uniflow-net
-        run: uv run --frozen pytest -q tests/test_workers.py --junitxml=../../reports/workers.xml
-
-      - name: Package uniflow-net
-        run: |
-          mkdir -p dist
-          cp cpp/build/uniflow-net dist/uniflow-net
-          "$CXX" --version > dist/compiler.txt
-          ldd dist/uniflow-net > dist/libraries.txt
-          ./dist/uniflow-net --help > dist/help.txt
-
-      - name: Upload uniflow-net artifact
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: uniflow-net-linux-${{ runner.arch }}-${{ matrix.name }}-${{ github.sha }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload C++ test reports
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: cpp-reports-${{ matrix.name }}
-          path: |
-            reports/
-            cpp/build/Testing/Temporary/
-          if-no-files-found: ignore
-          retention-days: 7
+    uses: ./.github/workflows/ci-cpp.yml
+    with: &tool-versions
+      uv-version: "0.12.5"
 
   python-tests:
-    name: Python lint and test
+    name: Python
     needs: changes
     if: needs.changes.outputs.python == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          version: ${{ env.UV_VERSION }}
-          python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: python/client/uv.lock
-          cache-suffix: python
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3.0.0
-        with:
-          version: "35.1"
-          repo-token: ${{ github.token }}
-
-      - name: Verify generated Python Protobuf is current
-        run: |
-          bash scripts/generate-proto.sh python
-          git diff --exit-code -- python/client/src/client/transfer_pb2.py
-
-      - name: Install dependencies
-        working-directory: python/client
-        run: uv sync --all-groups --frozen
-
-      - name: Ruff check
-        working-directory: python/client
-        run: uv run --frozen ruff check src tests
-
-      - name: Ruff format
-        working-directory: python/client
-        run: uv run --frozen ruff format --check src tests
-
-      - name: Pytest
-        working-directory: python/client
-        run: uv run --frozen pytest -q --ignore=tests/test_workers.py --junitxml=../../reports/python.xml
-
-      - name: Upload Python test reports
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: python-reports
-          path: reports/
-          if-no-files-found: ignore
-          retention-days: 7
+    uses: ./.github/workflows/ci-python.yml
+    with: *tool-versions
 
   devops-tests:
-    name: DevOps validation
+    name: DevOps
     needs: changes
     if: needs.changes.outputs.devops == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          version: ${{ env.UV_VERSION }}
-          python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: python/client/uv.lock
-          cache-suffix: devops
-
-      - name: Validate Compose profiles
-        run: |
-          docker compose -f devops/docker-compose.yaml config --quiet
-          for profile in all tx rx tx-external; do
-            docker compose --env-file .env.example \
-              -f devops/docker-compose.yaml --profile "$profile" config --quiet
-          done
-
-      - name: Test fixture helpers and router CLI
-        run: |
-          uv run --project python/client --frozen pytest -q \
-            devops/scripts/test_transfer_fixtures.py devops/router/test_router.py \
-            --junitxml=reports/devops.xml
-
-      - name: Lint shell scripts
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck
-          shellcheck devops/entrypoint.sh devops/run-transfer-test.sh scripts/generate-proto.sh
-
-      - name: Upload DevOps test reports
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: devops-reports
-          path: reports/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  transfer-tests:
-    name: Docker transfer (${{ matrix.chaos }})
-    needs: [changes, devops-tests]
-    if: needs.changes.outputs.devops == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        chaos: [none, mild]
-    env:
-      COMPOSE_PROJECT_NAME: uniflow-ci-${{ matrix.chaos }}
-      UNIFLOW_SEND_RATE_MBPS: "10"
-      STATS_INTERVAL_SEC: "1"
-      UNIFLOW_TEST_IN_DIR: ${{ github.workspace }}/.test-data/in
-      UNIFLOW_TEST_OUT_DIR: ${{ github.workspace }}/.test-data/out
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Build images and test transfer, modification and deletion
-        env:
-          CHAOS_MODE: ${{ matrix.chaos }}
-        run: |
-          mkdir -p reports
-          bash devops/run-transfer-test.sh --keep-running --smoke \
-            --chaos "$CHAOS_MODE" --timeout 180 2>&1 | tee reports/transfer.log
-
-      - name: Collect Compose diagnostics
-        if: always()
-        run: |
-          mkdir -p reports
-          docker compose -f devops/docker-compose.yaml --profile all ps -a \
-            > reports/compose-status.txt
-          docker compose -f devops/docker-compose.yaml --profile all logs --no-color \
-            > reports/compose.log 2>&1
-
-      - name: Clean up test containers
-        if: always()
-        run: docker compose -f devops/docker-compose.yaml --profile all down --volumes --remove-orphans
-
-      - name: Upload transfer diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7.0.1
-        with:
-          name: transfer-reports-${{ matrix.chaos }}
-          path: reports/
-          if-no-files-found: ignore
-          retention-days: 7
+    uses: ./.github/workflows/ci-devops.yml
+    with: *tool-versions
 
   ci-result:
     name: CI result
     if: always()
-    needs: [changes, workflow-lint, cpp-build, python-tests, devops-tests, transfer-tests]
+    needs: [changes, workflow-lint, cpp-build, python-tests, devops-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -353,7 +117,7 @@ jobs:
           for flag, names in {
               "cpp": ["cpp-build"],
               "python": ["python-tests"],
-              "devops": ["devops-tests", "transfer-tests"],
+              "devops": ["devops-tests"],
           }.items():
               if flags.get(flag) == "true":
                   required.update(names)

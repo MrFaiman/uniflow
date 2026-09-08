@@ -163,6 +163,9 @@ CMake generates its own C++ Protobuf sources. `bash scripts/generate-proto.sh`
 regenerates Python and standalone C++ bindings. Python generation should use
 protoc 35.1, matching the checked-in Python 7.35.1 bindings and locked runtime.
 
+For coverage and HTML reports, see the [C++ coverage instructions](cpp/README.md)
+and [Python test instructions](python/client/README.md).
+
 ### Transfer tests
 
 **The transfer script clears its input/output fixture directories.** Defaults

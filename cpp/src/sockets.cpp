@@ -1,9 +1,11 @@
 #include "sockets.h"
 
 #include "log.h"
+#include "runtime.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -14,7 +16,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <chrono>
 
 namespace uniflow_net {
 namespace {
@@ -53,7 +55,7 @@ sockaddr_in resolve_udp_target(std::string_view host, int port) {
             ::freeaddrinfo(result);
             result = nullptr;
         }
-        std::this_thread::sleep_for(kRetryDelay);
+        sleep_until(std::chrono::steady_clock::now() + kRetryDelay);
     }
 
     throw std::runtime_error("could not resolve router host: " + host_owned);
@@ -134,21 +136,33 @@ UniqueFd connect_unix_with_retry(std::string_view path) {
     const std::string path_owned{path};
 
     while (true) {
+        throw_if_shutdown_requested();
         UniqueFd fd{::socket(AF_UNIX, SOCK_STREAM, 0)};
         if (!fd) {
             throw std::runtime_error(std::string("socket(AF_UNIX) failed: ") + std::strerror(errno));
         }
+        make_socket_nonblocking(fd.get());
 
         const sockaddr_un address = make_unix_address(path);
         if (::connect(fd.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0) {
             return fd;
         }
 
-        const int saved_errno = errno;
-        if (saved_errno != ENOENT && saved_errno != ECONNREFUSED) {
+        int saved_errno = errno;
+        if (saved_errno == EINPROGRESS) {
+            wait_for_socket(fd.get(), POLLOUT);
+            socklen_t size = sizeof(saved_errno);
+            if (::getsockopt(fd.get(), SOL_SOCKET, SO_ERROR, &saved_errno, &size) < 0) {
+                saved_errno = errno;
+            } else if (saved_errno == 0) {
+                return fd;
+            }
+        }
+        if (saved_errno != ENOENT && saved_errno != ECONNREFUSED &&
+            saved_errno != EAGAIN && saved_errno != EINTR) {
             log_warn("Unix socket connect failed: {}; retrying", std::strerror(saved_errno));
         }
-        std::this_thread::sleep_for(kRetryDelay);
+        sleep_until(std::chrono::steady_clock::now() + kRetryDelay);
     }
 }
 

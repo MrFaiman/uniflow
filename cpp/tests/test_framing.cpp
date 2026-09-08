@@ -74,3 +74,9 @@ TEST_CASE("read_frame rejects truncated payload", "[framing]") {
     sockets.left.reset();
     REQUIRE_THROWS_AS(uniflow_net::read_frame(sockets.right), std::runtime_error);
 }
+
+TEST_CASE("framing rejects invalid socket descriptors", "[framing]") {
+    uniflow_net::UniqueFd invalid;
+    REQUIRE_THROWS_AS(uniflow_net::read_frame(invalid), std::runtime_error);
+    REQUIRE_THROWS_AS(uniflow_net::write_frame(invalid, "payload"), std::runtime_error);
+}

@@ -8,6 +8,7 @@
 #include "unique_fd.h"
 
 #include <sys/socket.h>
+#include <poll.h>
 
 #include <cerrno>
 #include <cstdint>
@@ -27,6 +28,7 @@ namespace uniflow_net {
     }
 
     UniqueFd server_fd = create_unix_server(config.ipc_socket_path);
+    make_socket_nonblocking(server_fd.get());
     log_info(
         "Sender {} ready: socket={} router={}:{}",
         config.worker_index,
@@ -38,9 +40,10 @@ namespace uniflow_net {
     std::uint64_t packet_count = 0;
 
     while (true) {
+        wait_for_socket(server_fd.get(), POLLIN);
         const int connection = ::accept(server_fd.get(), nullptr, nullptr);
         if (connection < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("accept failed: ") + std::strerror(errno));
@@ -63,13 +66,20 @@ namespace uniflow_net {
                     continue;
                 }
 
-                const ssize_t written = ::sendto(
-                    udp_fd.get(),
-                    payload->data(),
-                    payload->size(),
-                    0,
-                    reinterpret_cast<const sockaddr*>(&target),
-                    sizeof(target));
+                ssize_t written;
+                while (true) {
+                    wait_for_socket(udp_fd.get(), POLLOUT);
+                    written = ::sendto(
+                        udp_fd.get(),
+                        payload->data(),
+                        payload->size(),
+                        MSG_DONTWAIT,
+                        reinterpret_cast<const sockaddr*>(&target),
+                        sizeof(target));
+                    if (written >= 0 || (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                        break;
+                    }
+                }
 
                 if (written < 0 || static_cast<std::size_t>(written) != payload->size()) {
                     throw std::runtime_error(
@@ -87,6 +97,8 @@ namespace uniflow_net {
                         packet.file_id());
                 }
             }
+        } catch (const ShutdownRequested&) {
+            throw;
         } catch (const std::exception& error) {
             log_warn("Sender {} connection error: {}", config.worker_index, error.what());
         }

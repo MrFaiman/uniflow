@@ -19,6 +19,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+addopts = "--cov=client --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+branch = true
+omit = ["*/client/*_pb2.py"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py313"
@@ -30,5 +37,6 @@ select = ["E", "F", "I", "UP"]
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16",
 ]

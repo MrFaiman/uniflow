@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 project(uniflow_net LANGUAGES CXX)
 
 option(UNIFLOW_BUILD_TESTS "Build C++ unit tests" ON)
+option(UNIFLOW_ENABLE_COVERAGE "Instrument C++ targets and add an HTML coverage target" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +57,7 @@ add_library(
     src/framing.cpp
     src/log.cpp
     src/rate_limiter.cpp
+    src/runtime.cpp
     src/receiver.cpp
     src/sender.cpp
     src/sockets.cpp
@@ -122,4 +124,8 @@ target_compile_options(
 if(UNIFLOW_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(UNIFLOW_ENABLE_COVERAGE)
+    include(cmake/Coverage.cmake)
 endif()

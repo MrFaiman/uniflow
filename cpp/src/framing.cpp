@@ -1,6 +1,8 @@
 #include "framing.h"
+#include "runtime.h"
 
 #include <arpa/inet.h>
+#include <poll.h>
 #include <sys/socket.h>
 
 #include <cerrno>
@@ -15,16 +17,17 @@ bool read_exact(UniqueFd& fd, std::span<std::byte> buffer) {
     std::size_t received = 0;
 
     while (received < buffer.size()) {
+        wait_for_socket(fd.get(), POLLIN);
         const ssize_t result = ::recv(
             fd.get(),
             buffer.data() + received,
             buffer.size() - received,
-            0);
+            MSG_DONTWAIT);
         if (result == 0) {
             return false;
         }
         if (result < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("recv failed: ") + std::strerror(errno));
@@ -38,18 +41,19 @@ void write_all(UniqueFd& fd, std::span<const std::byte> buffer) {
     std::size_t sent = 0;
 
     while (sent < buffer.size()) {
+        wait_for_socket(fd.get(), POLLOUT);
         const ssize_t result = ::send(
             fd.get(),
             buffer.data() + sent,
             buffer.size() - sent,
 #ifdef MSG_NOSIGNAL
-            MSG_NOSIGNAL
+            MSG_NOSIGNAL | MSG_DONTWAIT
 #else
-            0
+            MSG_DONTWAIT
 #endif
         );
         if (result < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("send failed: ") + std::strerror(errno));

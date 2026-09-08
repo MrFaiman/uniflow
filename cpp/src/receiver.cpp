@@ -6,6 +6,7 @@
 #include "unique_fd.h"
 
 #include <sys/socket.h>
+#include <poll.h>
 
 #include <array>
 #include <cerrno>
@@ -30,6 +31,8 @@ void forward_with_reconnect(
         try {
             write_frame(manager_fd, payload);
             return;
+        } catch (const ShutdownRequested&) {
+            throw;
         } catch (const std::exception& error) {
             log_warn("forward to Session Manager failed: {}", error.what());
             manager_fd.reset();
@@ -57,10 +60,11 @@ void forward_with_reconnect(
     std::uint64_t received = 0;
 
     while (true) {
+        wait_for_socket(udp_fd.get(), POLLIN);
         const ssize_t size =
-            ::recvfrom(udp_fd.get(), buffer.data(), buffer.size(), 0, nullptr, nullptr);
+            ::recvfrom(udp_fd.get(), buffer.data(), buffer.size(), MSG_DONTWAIT, nullptr, nullptr);
         if (size < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
             throw std::runtime_error(std::string("UDP receive failed: ") + std::strerror(errno));
