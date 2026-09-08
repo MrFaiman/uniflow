@@ -100,8 +100,8 @@ UDP paths to RX. The provided router container is not started in this mode.
 ## Configuration
 
 Compose reads shell environment overrides. To use a file explicitly, add
-`--env-file .env` before the profile option. `.env.example` documents the
-conservative Compose settings inherited from the two-PC branch.
+`--env-file .env` before the profile option. Copy [`.env.example`](.env.example)
+to `.env` to start with the documented Compose settings.
 
 | Variable | Compose default | Meaning |
 | --- | --- | --- |
@@ -125,15 +125,15 @@ socket or the Python TX socket base (the `.sender.N` suffix is retained).
 Standalone C++ workers treat an explicit override as the exact socket path.
 
 Compose fixes `PORT=9000` and `UNIFLOW_WORKERS=3`. For a native deployment,
-`PORT` may be 1-65533 and `UNIFLOW_NET_BINARY` points to the built worker. Native Python
-defaults to 20 percent FEC; standalone C++ defaults to unpaced sending.
+`PORT` may be 1-65533 and `UNIFLOW_NET_BINARY` points to the built worker.
+Native Python defaults to 20 percent FEC; standalone C++ defaults to unpaced sending.
 Export the example's FEC and pacing values to use the Compose policy locally.
 
 `UNIFLOW_LOG_FILE` optionally mirrors C++ logs to a file. Compose endpoints
 use `/var/log/uniflow/tx.log` and `rx.log` inside their containers; stdout/stderr
 remains available through `docker compose logs`.
 
-## Build and test
+## Native build and usage
 
 Native development requires Python 3.13+, uv, a Rust toolchain for the
 RaptorQ extension, CMake 3.28+, Ninja, Git, Protobuf with protoc, and a C++20
@@ -144,27 +144,76 @@ Clang 19 with a suitable standard library).
 cmake -S cpp -B cpp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUNIFLOW_BUILD_TESTS=ON
 cmake --build cpp/build --parallel
 ctest --test-dir cpp/build --output-on-failure --parallel 4
-cd python/client
-uv sync --all-groups --frozen
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv run pytest -q
+uv sync --project python/client --all-groups --frozen
 ```
 
-From the repository root, run the compiled-worker integration test too:
+The Python CLI starts and supervises the three C++ workers for each endpoint.
+After building, run RX first in one terminal and TX in another. Run these
+commands from the repository root on each endpoint, replacing the example
+directories and router address:
 
 ```sh
-UNIFLOW_NET_BINARY="$PWD/cpp/build/uniflow-net" uv run --project python/client pytest -q python/client/tests/test_workers.py
-uv run --project python/client pytest -q devops/scripts/test_transfer_fixtures.py devops/router/test_router.py
-shellcheck devops/entrypoint.sh devops/run-transfer-test.sh
+export UNIFLOW_NET_BINARY="$PWD/cpp/build/uniflow-net"
+uv run --project python/client --frozen uniflow recv /absolute/path/to/in
 ```
 
-CMake generates its own C++ Protobuf sources. `bash scripts/generate-proto.sh`
-regenerates Python and standalone C++ bindings. Python generation should use
-protoc 35.1, matching the checked-in Python 7.35.1 bindings and locked runtime.
+```sh
+export UNIFLOW_NET_BINARY="$PWD/cpp/build/uniflow-net"
+export UNIFLOW_FEC_REPAIR_PERCENT=50
+export UNIFLOW_SEND_RATE_MBPS=1
+uv run --project python/client --frozen uniflow send /absolute/path/to/out 192.168.1.20
+```
 
-For coverage and HTML reports, see the [C++ coverage instructions](cpp/README.md)
-and [Python test instructions](python/client/README.md).
+The router must forward UDP ports 9000-9002 to RX. The endpoint CLI does not
+start a router. With the Python environment activated, `uniflow send ROUTER`
+and `uniflow recv` use the current working directory as the source or
+destination. `python -m client.cli` exposes the same commands. Stop an endpoint
+with Ctrl+C or SIGTERM; its supervisor shuts down its workers.
+
+## Tests and coverage
+
+Run these commands from the repository root after the native build and
+dependency installation above:
+
+```sh
+uv run --project python/client --frozen ruff check python/client/src python/client/tests
+uv run --project python/client --frozen ruff format --check python/client/src python/client/tests
+UNIFLOW_NET_BINARY="$PWD/cpp/build/uniflow-net" uv run --project python/client --frozen pytest -q python/client/tests
+uv run --project python/client --frozen pytest -q devops/scripts/test_transfer_fixtures.py devops/router/test_router.py
+shellcheck devops/entrypoint.sh devops/run-transfer-test.sh scripts/generate-proto.sh
+```
+
+Setting `UNIFLOW_NET_BINARY` includes the compiled worker and CLI lifecycle
+tests in the Python suite. Pytest reports line and branch coverage and writes
+`htmlcov/index.html` relative to the working directory. Add `--no-cov` to
+disable coverage for a run.
+
+For C++ coverage, run:
+
+```sh
+cmake -S cpp -B cpp/build-coverage -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DUNIFLOW_BUILD_TESTS=ON \
+  -DUNIFLOW_ENABLE_COVERAGE=ON
+cmake --build cpp/build-coverage --target coverage --parallel
+```
+
+The coverage target runs CTest and Python worker/CLI integration tests against
+the instrumented binary, then writes `cpp/build-coverage/coverage/index.html`.
+See the [C++ coverage instructions](cpp/README.md) for supported toolchains
+and coverage thresholds, and the [Python test instructions](python/client/README.md)
+for package-local commands.
+
+CMake generates its own C++ Protobuf sources. To regenerate the checked-in
+Python bindings, use protoc 35.1, matching Python Protobuf 7.35.1 and the
+locked runtime:
+
+```sh
+bash scripts/generate-proto.sh python
+```
+
+The script also accepts `cpp` for standalone C++ bindings or `all` (the
+default) for both languages. CI checks that Python regeneration produces
+no changes.
 
 ### Transfer tests
 
@@ -191,9 +240,16 @@ Omit `--smoke` for the larger fixture suite; add `--include-1gb --timeout 7200`
 for a 1 GiB file. The script builds and starts the stack and removes its
 containers on exit unless `--keep-running` is given.
 
-CI builds/tests C++, lints/tests Python, validates every Compose profile,
-checks DevOps helpers and shell scripts, then builds the images and runs the
-fault-injected smoke suite. Path filters retain separate C++/Python/DevOps jobs.
+CI builds/tests C++ with GCC 14 and Clang 19, lints/tests Python, validates
+every Compose profile, checks DevOps helpers and shell scripts, and runs
+Docker smoke transfers with both `none` and `mild` fault modes. It also
+validates workflow syntax and uses path filters to select the C++, Python,
+and DevOps jobs for pull requests.
+
+The GCC 14 coverage build enforces an 80 percent line coverage minimum.
+GitHub Actions uploads the `cpp-coverage-gcc14` and `python-coverage` HTML
+reports for seven days, along with test diagnostics. Compiled Linux worker
+artifacts are retained for fourteen days.
 
 ## Operational limits
 
@@ -213,5 +269,5 @@ fault-injected smoke suite. Path filters retain separate C++/Python/DevOps jobs.
   Python supervisor and cause the endpoint to fail; automatic restart/replay
   is not implemented.
 
-See [integration decisions and verification](docs/integration.md) for the
-branch comparison, discarded code, and test evidence.
+See the [Docker environment guide](devops/README.md) for process inspection,
+logs, and manual checksum verification.
