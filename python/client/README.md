@@ -9,7 +9,14 @@ The Docker runtime is started through `client.cli`:
 
 ```bash
 python -m client.cli send /data/out router
-python -m client.cli receive /data/in
+python -m client.cli recv /data/in
+```
+
+The folder defaults to the current working directory when omitted:
+
+```bash
+uniflow send router
+uniflow recv
 ```
 
 For the complete architecture, Docker commands and end-to-end tests, see the repository-level `README.md`.

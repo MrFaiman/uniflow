@@ -44,7 +44,7 @@ services:
     init: true
     stop_grace_period: 15s
     command:
-      - receive
+      - recv
       - /data/in
     environment:
       PORT: "9000"

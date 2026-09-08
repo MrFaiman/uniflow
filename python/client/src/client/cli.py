@@ -14,11 +14,23 @@ def create_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     send = commands.add_parser("send", help="Run the TX File Monitor")
-    send.add_argument("folder", type=Path, help="Folder to monitor")
+    send.add_argument(
+        "folder",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Folder to monitor (default: current working directory)",
+    )
     send.add_argument("router", help="Router hostname or IP")
 
-    receive = commands.add_parser("receive", help="Run the RX Session Manager")
-    receive.add_argument("folder", type=Path, help="Folder for reconstructed files")
+    recv = commands.add_parser("recv", help="Run the RX Session Manager")
+    recv.add_argument(
+        "folder",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Folder for reconstructed files (default: current working directory)",
+    )
 
     return parser
 
