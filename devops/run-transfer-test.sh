@@ -3,33 +3,68 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS="$ROOT/scripts"
-OUT_DIR="$ROOT/data/out"
-IN_DIR="$ROOT/data/in"
+OUT_DIR="${UNIFLOW_TEST_OUT_DIR:-$ROOT/data/out}"
+IN_DIR="${UNIFLOW_TEST_IN_DIR:-$ROOT/data/in}"
 TIMEOUT_SEC="${UNIFLOW_TEST_TIMEOUT:-3600}"
 KEEP_RUNNING=0
-CHAOS="mild"
+CHAOS="none"
+INCLUDE_1GB=0
+SMOKE=0
+
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+  PYTHON=python
+else
+  echo "error: python3 (or python) is required for fixture generation" >&2
+  exit 127
+fi
+
+compose() {
+  DOCKER_BUILDKIT=1 \
+  COMPOSE_BAKE=true \
+  docker compose \
+    -f "$ROOT/docker-compose.yaml" \
+    --profile all \
+    "$@"
+}
 
 usage() {
-  cat <<'EOF'
+  cat <<'HELP'
 Usage: run-transfer-test.sh [options]
 
-  Automated devops transfer test: start compose, generate files, verify receipt.
-
 Options:
-  --keep-running    Leave docker compose running after the test
-  --chaos mild      Default router disruption rates (3%)
-  --chaos harsh     Raise PACKET_LOSS, BIT_FLIP, MISROUTING to 15%
+  --keep-running    Leave Docker Compose running after the test
+  --chaos none      No injected network faults (default)
+  --chaos loss      3% packet loss only
+  --chaos flip      3% bit flips only
+  --chaos misroute  3% misrouting only
+  --chaos mild      3% loss, 3% bit flips, 3% misrouting
+  --chaos harsh     15% loss, 15% bit flips, 15% misrouting, 50% FEC repair
+  --include-1gb     Also generate and verify the 1 GiB fixture
+  --smoke           Run the bounded small/multi-path fixture suite
   --timeout SEC     Verification timeout (default: 3600)
   -h, --help        Show this help
-EOF
+HELP
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --keep-running) KEEP_RUNNING=1; shift ;;
+    --keep-running)
+      KEEP_RUNNING=1
+      shift
+      ;;
     --chaos)
       CHAOS="${2:-}"
       shift 2
+      ;;
+    --include-1gb)
+      INCLUDE_1GB=1
+      shift
+      ;;
+    --smoke)
+      SMOKE=1
+      shift
       ;;
     --timeout)
       TIMEOUT_SEC="${2:-}"
@@ -50,75 +85,164 @@ done
 clean_data_dir() {
   local dir=$1
   mkdir -p "$dir"
-  find "$dir" -mindepth 1 ! -name '.gitkeep' -print0 | xargs -0 rm -rf
+  find "$dir" -mindepth 1 ! -name '.gitkeep' -print0 | xargs -0 -r rm -rf
 }
 
+# shellcheck disable=SC2329 # invoked via trap EXIT
 teardown() {
   if [[ "$KEEP_RUNNING" -eq 0 ]]; then
-    docker compose -f "$ROOT/docker-compose.yaml" down
+    compose down
   fi
 }
 
 wait_for_services() {
   local attempt
-  for attempt in $(seq 1 90); do
-    if docker compose -f "$ROOT/docker-compose.yaml" logs tx_machine 2>&1 | grep -q "watching" \
-      && docker compose -f "$ROOT/docker-compose.yaml" logs rx_machine 2>&1 | grep -q "receiver listening"; then
-      echo "Services ready."
+
+  for attempt in $(seq 1 120); do
+    local tx_logs
+    local rx_logs
+    local tx_senders
+    local rx_receivers
+
+    tx_logs="$(compose logs tx_machine 2>&1 || true)"
+    rx_logs="$(compose logs rx_machine 2>&1 || true)"
+    tx_senders="$(grep -c "Started send worker" <<<"$tx_logs" || true)"
+    rx_receivers="$(grep -c "Started recv worker" <<<"$rx_logs" || true)"
+
+    if [[ "$tx_senders" -ge 3 && "$rx_receivers" -ge 3 ]] \
+      && grep -q "Watching folder:" <<<"$tx_logs" \
+      && grep -q "Receiving files into:" <<<"$rx_logs"; then
+      echo "All required TX/RX processes are running."
+      echo "TX Senders: $tx_senders"
+      echo "RX Receivers: $rx_receivers"
       return 0
     fi
-    echo "Waiting for services... ($attempt/90)"
-    sleep 2
+
+    echo "Waiting for services... ($attempt/120) - senders=$tx_senders receivers=$rx_receivers"
+    sleep 1
   done
-  echo "Timed out waiting for tx/rx services." >&2
+
+  echo "Timed out waiting for the required processes." >&2
+  compose logs >&2 || true
   return 1
 }
 
-export PACKET_LOSS BIT_FLIP MISROUTING
+wait_for_delete() {
+  local received=$1
+  local timeout=$2
+  local deadline=$((SECONDS + timeout))
+
+  while [[ -e "$received" && "$SECONDS" -lt "$deadline" ]]; do
+    sleep 1
+  done
+
+  [[ ! -e "$received" ]]
+}
+
+export PACKET_LOSS
+export BIT_FLIP
+export MISROUTING
+export UNIFLOW_FEC_REPAIR_PERCENT
+
 case "$CHAOS" in
+  none)
+    PACKET_LOSS="0"
+    BIT_FLIP="0"
+    MISROUTING="0"
+    UNIFLOW_FEC_REPAIR_PERCENT="20"
+    ;;
+  loss)
+    PACKET_LOSS="0.03"
+    BIT_FLIP="0"
+    MISROUTING="0"
+    UNIFLOW_FEC_REPAIR_PERCENT="20"
+    ;;
+  flip)
+    PACKET_LOSS="0"
+    BIT_FLIP="0.03"
+    MISROUTING="0"
+    UNIFLOW_FEC_REPAIR_PERCENT="20"
+    ;;
+  misroute)
+    PACKET_LOSS="0"
+    BIT_FLIP="0"
+    MISROUTING="0.03"
+    UNIFLOW_FEC_REPAIR_PERCENT="20"
+    ;;
   mild)
     PACKET_LOSS="0.03"
     BIT_FLIP="0.03"
     MISROUTING="0.03"
+    UNIFLOW_FEC_REPAIR_PERCENT="20"
     ;;
   harsh)
     PACKET_LOSS="0.15"
     BIT_FLIP="0.15"
     MISROUTING="0.15"
+    UNIFLOW_FEC_REPAIR_PERCENT="50"
     ;;
   *)
-    echo "unknown chaos mode: $CHAOS (use mild or harsh)" >&2
+    echo "unknown chaos mode: $CHAOS" >&2
     exit 1
     ;;
 esac
 
 trap teardown EXIT
 
+clean_data_dir "$OUT_DIR"
+clean_data_dir "$IN_DIR"
 cd "$ROOT"
-echo "Starting docker compose (chaos=$CHAOS)..."
-docker compose up -d --build
 
+echo "Starting Docker Compose all-in-one profile (chaos=$CHAOS)..."
+compose up -d --build --wait --wait-timeout 120
 wait_for_services
 
-echo "Cleaning receive directory..."
-clean_data_dir "$IN_DIR"
+echo "Generating deterministic transfer fixtures..."
+GEN_ARGS=(--out-dir "$OUT_DIR")
+if [[ "$SMOKE" -eq 1 ]]; then
+  GEN_ARGS+=(--manifest "$SCRIPTS/smoke.manifest")
+fi
+if [[ "$INCLUDE_1GB" -eq 1 ]]; then
+  GEN_ARGS+=(--include-1gb)
+fi
+"$PYTHON" "$SCRIPTS/generate_test_files.py" "${GEN_ARGS[@]}"
 
-echo "Generating test files..."
-python3 "$SCRIPTS/generate_test_files.py" --out-dir "$OUT_DIR"
-
-echo "Verifying transfers (timeout=${TIMEOUT_SEC}s)..."
-if python3 "$SCRIPTS/verify_transfers.py" \
+echo "Verifying transfers with SHA-256..."
+if "$PYTHON" "$SCRIPTS/verify_transfers.py" \
   --receive-dir "$IN_DIR" \
   --sidecar "$OUT_DIR/.manifest.sha256" \
   --wait \
   --timeout-sec "$TIMEOUT_SEC"; then
-  echo "Transfer test passed."
+
+  echo "Initial transfer suite passed."
+  echo "Testing file modification..."
+  "$PYTHON" "$SCRIPTS/test_modification.py" \
+    --source "$OUT_DIR/tiny.txt" \
+    --received "$IN_DIR/tiny.txt" \
+    --timeout-sec 300
+
+  echo "Modification test passed."
+  echo "Testing file deletion..."
+  rm -f "$OUT_DIR/tiny.txt"
+
+  if ! wait_for_delete "$IN_DIR/tiny.txt" 60; then
+    echo "Timed out waiting for deleted RX file to disappear." >&2
+    compose logs tx_machine rx_machine >&2 || true
+    exit 1
+  fi
+
+  echo "Deletion test passed."
+  echo "Transfer, modification and deletion tests passed."
+  compose logs router | tail -n 40 || true
+
   if [[ "$KEEP_RUNNING" -eq 1 ]]; then
     trap - EXIT
-    echo "Leaving compose running (--keep-running)."
+    echo "Leaving Compose running (--keep-running)."
   fi
+
   exit 0
 fi
 
 echo "Transfer test failed." >&2
+compose logs >&2 || true
 exit 1

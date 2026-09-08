@@ -37,3 +37,13 @@ def test_expected_sha256_matches_written_file(tmp_path: Path) -> None:
     )
     entries = read_manifest_sidecar(sidecar)
     assert verify_entry(tmp_path, entries[0]) is None
+
+
+def test_fixtures_detect_swapped_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "blocks.bin"
+    size = 2 * 1024 * 1024
+    write_fixture_file(path, path.name, size)
+    entry = FixtureEntry(path.name, size, expected_sha256(path.name, size))
+    data = path.read_bytes()
+    path.write_bytes(data[size // 2:] + data[:size // 2])
+    assert "checksum mismatch" in verify_entry(tmp_path, entry)
