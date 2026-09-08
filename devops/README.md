@@ -1,142 +1,75 @@
-# Uniflow devops test network
+# Uniflow Docker environment
 
-Emulates an unreliable UDP path between a sender and receiver so you can
-exercise FEC recovery against packet loss, bit flips, and misrouting.
+Run all commands from this directory.
 
-## Architecture
+## Profiles
 
-```
-tx_machine (uniflow send) --> router (chaos) --> rx_machine (uniflow receive)
-```
+| Profile | Services |
+|---------|----------|
+| `all` | router + tx_machine + rx_machine |
+| `tx` | router + tx_machine |
+| `rx` | rx_machine |
+| `tx-external` | tx_machine only (point `ROUTER_HOST` at an external router) |
 
-- **tx_machine** watches `data/out/` and sends files to hostname `router`
-- **router** listens on UDP ports 9000–9002, applies disruptions, forwards to `rx_machine`
-- **rx_machine** receives on UDP 9000–9002 and assembles files into `data/in/`, preserving relative paths (for example `data/out/sub/file.txt` arrives as `data/in/sub/file.txt`)
-
-## Quick start
+## Start
 
 ```bash
-cd devops
-docker compose up --build
+docker compose --profile all up --build
 ```
 
-In another terminal, drop a file into the send folder:
+The TX container runs one Python File Monitor plus three independent C++ Sender processes. The RX container runs one Python Session Manager plus three independent C++ Receiver processes.
+
+Ports are 9000, 9001 and 9002. Local IPC uses Unix Domain Sockets. Network traffic is UDP and only flows TX -> Router -> RX.
+
+Build notes:
+
+- Images use BuildKit caches and a multi-stage Dockerfile (GCC 14/C++20 workers and uv-managed Python on Debian Trixie).
+- Prefer `DOCKER_BUILDKIT=1` (enabled by default in recent Docker Desktop).
+
+## Zero-fault proof
 
 ```bash
-echo hello > data/out/test.txt
-ls data/in/
+./run-transfer-test.sh --chaos none
 ```
 
-## Router logs and statistics
-
-Follow router output:
+## Fault-injection proof
 
 ```bash
-docker compose logs -f router
+./run-transfer-test.sh --chaos mild
 ```
 
-Per-packet events:
+For a bounded suite including small, empty and multi-path files, add `--smoke`.
+The script clears its fixture directories before running. Set
+`UNIFLOW_TEST_OUT_DIR` and `UNIFLOW_TEST_IN_DIR` to dedicated absolute paths
+to keep manual deployment data separate. See the root README for all modes,
+two-PC startup ordering, defaults, and operational limits.
 
-- `received` — packet arrived at the router
-- `dropped` — packet loss applied
-- `bit_flip` — byte and bit index corrupted
-- `misrouted` — sent to the wrong receiver port
-- `forwarded` — delivered to `rx_machine`
-
-Periodic summaries (every 10s by default):
-
-```
-[stats] received=120 dropped=4 (3.3%) bit_flipped=3 (2.5%) misrouted=4 (3.3%) forwarded=116 bytes_in=184320 bytes_out=178176
-[stats] port=9000 recv=40 drop=1 fwd=38 misroute_out=1
-```
-
-A final stats dump is printed on shutdown.
-
-## Environment variables
-
-Router (`docker-compose.yaml` or shell):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `9000` | Starting UDP port (router listens on PORT..PORT+N-1) |
-| `PACKET_LOSS` | `0.03` | Probability of dropping a packet |
-| `BIT_FLIP` | `0.03` | Probability of flipping one bit |
-| `MISROUTING` | `0.03` | Probability of sending to wrong port |
-| `STATS_INTERVAL_SEC` | `10` | Stats dump interval; `0` disables periodic dumps |
-
-Uniflow services:
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `PORT` | `9000` | Starting receiver port (workers use 9000–9002) |
-| `UNIFLOW_WORKERS` | `3` | Sender/receiver worker count |
-| `UNIFLOW_SKIP_BUILD` | `1` | Use prebuilt Go binary in the image |
-| `UNIFLOW_WATCH_POLLING` | `1` (tx only) | Poll bind mounts instead of inotify |
-| `UNIFLOW_MAX_FILE_BYTES` | `5368709120` (5 GiB) | Maximum file size for coordinated transfer |
-
-### Stress testing
-
-FEC repair overhead is modest (~5% extra symbols per block). For harsh
-chaos, raise disruption rates in `docker-compose.yaml`:
-
-```yaml
-environment:
-  PACKET_LOSS: "0.15"
-  BIT_FLIP: "0.15"
-  MISROUTING: "0.15"
-```
-
-At 15% each, many transfers will fail to assemble — useful for verifying
-failure modes.
-
-## Data directories
-
-- `data/out/` — files to send (bind-mounted into tx_machine)
-- `data/in/` — received files (bind-mounted into rx_machine)
-
-Only `.gitkeep` files are tracked; transferred files are ignored by git.
-
-## Automated transfer test
-
-Run the full multi-file workload (small, nested, coordinated, 1 GiB, and 1.5 GiB files)
-with one command:
+## 1 GiB proof
 
 ```bash
-cd devops
-./run-transfer-test.sh
+./run-transfer-test.sh --chaos none --include-1gb --timeout 7200
 ```
 
-The runner:
+## Manual test
 
-1. Starts `docker compose up -d --build`
-2. Waits for tx/rx services to be ready
-3. Generates deterministic test files into `data/out/` (see [`scripts/fixtures.manifest`](scripts/fixtures.manifest))
-4. Polls `data/in/` until every file matches size and SHA-256, or times out
-5. Tears down compose on exit (unless `--keep-running`)
-
-Options:
+1. Start Compose.
+2. Copy a file into `data/out/`.
+3. Wait for `COMPLETE: <name> - HASH OK` in the RX logs.
+4. Compare `data/out/<path>` with `data/in/<path>` using SHA-256.
 
 ```bash
-./run-transfer-test.sh --keep-running          # leave stack up for debugging
-./run-transfer-test.sh --chaos harsh         # 15% loss/flip/misroute
-./run-transfer-test.sh --timeout 7200        # 2 hour verification window
-UNIFLOW_TEST_TIMEOUT=7200 ./run-transfer-test.sh
+sha256sum data/out/example.bin data/in/example.bin
 ```
 
-Requirements:
-
-- ~3+ GiB free disk under `devops/data/` for generated fixtures
-- Sufficient RAM for the largest file (sender and receiver load full file contents in memory)
-- Docker with enough resources; first run builds images and is slow
-
-Manual steps (generate or verify only):
+## Useful runtime evidence
 
 ```bash
-python3 scripts/generate_test_files.py
-python3 scripts/verify_transfers.py --wait --timeout-sec 3600
+docker compose --profile all top tx_machine
+docker compose --profile all top rx_machine
+docker compose --profile all logs tx_machine
+docker compose --profile all logs rx_machine
+docker compose --profile all logs router
+docker compose --profile all ps
 ```
 
-Example success output ends with `Transfer test passed.` and `All transfers verified.`
-
-If verification times out, try lowering chaos (`--chaos mild`), raising `--timeout`, or
-checking `docker compose logs tx_machine rx_machine router`.
+You should see three Sender workers and three Receiver workers, not merely `UNIFLOW_WORKERS=3` in configuration.

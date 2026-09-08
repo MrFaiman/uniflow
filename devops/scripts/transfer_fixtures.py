@@ -1,4 +1,4 @@
-"""Shared helpers for devops transfer test fixtures."""
+"""Shared helpers for deterministic transfer fixtures."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ def parse_size(raw: str) -> int:
     raw = raw.strip()
     if raw.isdigit():
         return int(raw)
+
     units = {"K": 1024, "M": 1024**2, "G": 1024**3}
     suffix = raw[-1].upper()
     if suffix in units:
@@ -41,47 +42,41 @@ def parse_manifest(manifest_path: Path) -> list[tuple[str, int]]:
     return entries
 
 
-def _chunk_byte(relative_path: str, offset: int) -> int:
-    seed = hashlib.sha256(f"{relative_path}:{offset // 64}".encode()).digest()
-    return seed[offset % len(seed)]
+def _iter_chunks(relative_path: str, size: int):
+    for offset in range(0, size, CHUNK_SIZE):
+        # Position-dependent bytes expose swapped blocks and duplicated symbols.
+        seed = f"{relative_path}:{offset}".encode()
+        yield hashlib.shake_256(seed).digest(min(CHUNK_SIZE, size - offset))
 
 
 def write_fixture_file(path: Path, relative_path: str, size: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    written = 0
     with path.open("wb") as handle:
-        while written < size:
-            block_len = min(CHUNK_SIZE, size - written)
-            block = bytes(_chunk_byte(relative_path, written + i) for i in range(block_len))
-            handle.write(block)
-            written += block_len
+        for chunk in _iter_chunks(relative_path, size):
+            handle.write(chunk)
 
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        while True:
-            chunk = handle.read(CHUNK_SIZE)
-            if not chunk:
-                break
+        while chunk := handle.read(CHUNK_SIZE):
             digest.update(chunk)
     return digest.hexdigest()
 
 
 def expected_sha256(relative_path: str, size: int) -> str:
     digest = hashlib.sha256()
-    written = 0
-    while written < size:
-        block_len = min(CHUNK_SIZE, size - written)
-        block = bytes(_chunk_byte(relative_path, written + i) for i in range(block_len))
-        digest.update(block)
-        written += block_len
+    for chunk in _iter_chunks(relative_path, size):
+        digest.update(chunk)
     return digest.hexdigest()
 
 
 def write_manifest_sidecar(out_dir: Path, entries: list[FixtureEntry]) -> Path:
     sidecar = out_dir / MANIFEST_SIDECAR
-    lines = [f"{entry.relative_path} {entry.size} {entry.sha256}" for entry in entries]
+    lines = [
+        f"{entry.relative_path} {entry.size} {entry.sha256}"
+        for entry in entries
+    ]
     sidecar.write_text("\n".join(lines) + "\n")
     return sidecar
 
@@ -96,7 +91,11 @@ def read_manifest_sidecar(sidecar_path: Path) -> list[FixtureEntry]:
         if len(parts) != 3:
             raise ValueError(f"invalid sidecar line: {line!r}")
         entries.append(
-            FixtureEntry(relative_path=parts[0], size=int(parts[1]), sha256=parts[2]),
+            FixtureEntry(
+                relative_path=parts[0],
+                size=int(parts[1]),
+                sha256=parts[2],
+            )
         )
     return entries
 
@@ -105,9 +104,9 @@ def verify_entry(receive_dir: Path, entry: FixtureEntry) -> str | None:
     path = receive_dir / entry.relative_path
     if not path.is_file():
         return "missing"
-    stat = path.stat()
-    if stat.st_size != entry.size:
-        return f"size mismatch (got {stat.st_size}, want {entry.size})"
+    if path.stat().st_size != entry.size:
+        return f"size mismatch (got {path.stat().st_size}, want {entry.size})"
+
     got = sha256_file(path)
     if got != entry.sha256:
         return f"checksum mismatch (got {got}, want {entry.sha256})"

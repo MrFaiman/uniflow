@@ -1,9 +1,12 @@
-FROM python:3.10-slim
+FROM python:3.13-slim-trixie
 
 WORKDIR /app
 
-COPY router/router.py .
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-COPY  config.py .
+COPY router/router.py /app/router.py
+COPY config.py /app/config.py
+COPY healthcheck.py /app/healthcheck.py
 
-CMD ["python", "router.py"]
+CMD ["python", "-u", "router.py"]

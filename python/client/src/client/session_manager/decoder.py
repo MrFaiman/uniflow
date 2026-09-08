@@ -4,10 +4,7 @@ from client.session_manager.file_session import FileSession
 from client.transfer_pb2 import FilePacket
 
 
-def decode_packet(
-    session: FileSession,
-    packet: FilePacket,
-):
+def decode_packet(session: FileSession, packet: FilePacket) -> bytes | None:
     block = packet.block_index
 
     if block not in session.decoders:
@@ -19,14 +16,14 @@ def decode_packet(
     try:
         decoded = session.decoders[block].decode(packet.data)
     except Exception:
-        print("Invalid RaptorQ packet")
+        print("Invalid RaptorQ packet", flush=True)
         return None
 
     if decoded is None:
         return None
 
     if len(decoded) != packet.block_size:
-        print("Invalid decoded block")
+        print("Invalid decoded block", flush=True)
         return None
 
     return decoded

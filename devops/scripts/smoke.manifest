@@ -1,0 +1,5 @@
+tiny.txt 1024
+empty.bin 0
+small-a.bin 64K
+nested/small-b.bin 64K
+large.bin 12M

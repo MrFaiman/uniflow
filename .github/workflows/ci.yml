@@ -2,107 +2,131 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, dev]
   pull_request:
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  go-lint:
-    name: Go lint
-    runs-on: ubuntu-latest
-
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      cpp: ${{ github.event_name != 'pull_request' || steps.filter.outputs.cpp == 'true' }}
+      python: ${{ github.event_name != 'pull_request' || steps.filter.outputs.python == 'true' }}
+      devops: ${{ github.event_name != 'pull_request' || steps.filter.outputs.devops == 'true' }}
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
         with:
-          go-version-file: go/go.mod
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
+          persist-credentials: false
+      - uses: dorny/paths-filter@v4.0.3
+        if: github.event_name == 'pull_request'
+        id: filter
         with:
-          version: "29.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            cpp:
+              - 'cpp/**'
+              - 'proto/**'
+              # Compiled-worker tests depend on the Python package.
+              - 'python/client/**'
+              - '.github/workflows/**'
+            python:
+              - 'python/**'
+              - 'proto/**'
+              - 'scripts/generate-proto.sh'
+              - '.github/workflows/**'
+            devops:
+              - '.env.example'
+              - 'scripts/generate-proto.sh'
+              - 'devops/**'
+              - 'cpp/**'
+              - 'python/**'
+              - 'proto/**'
+              - '.dockerignore'
+              - '.github/workflows/**'
 
-      - name: Install protoc-gen-go
-        working-directory: ./go
-        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
-
-      - name: Generate protobuf
-        run: bash scripts/generate-proto.sh go
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
-        with:
-          version: v2.13.2
-          working-directory: go
-
-  go-tests:
-    name: Go tests
-    runs-on: ubuntu-latest
-
+  workflow-lint:
+    name: Validate workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
         with:
-          go-version-file: go/go.mod
+          persist-credentials: false
+      - name: Actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -w /repo \
+            rhysd/actionlint:1.7.12 -color .github/workflows/*.yml
 
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "29.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install protoc-gen-go
-        working-directory: ./go
-        run: go install google.golang.org/protobuf/cmd/protoc-gen-go@$(go list -m -f '{{.Version}}' google.golang.org/protobuf)
-
-      - name: Generate protobuf
-        working-directory: ./go
-        run: go test ./scripts
-
-      - name: Run Go tests
-        working-directory: ./go
-        run: go test ./transfer ./tests ./scripts
+  cpp-build:
+    name: C++
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
+    uses: ./.github/workflows/ci-cpp.yml
+    with: &tool-versions
+      uv-version: "0.12.5"
 
   python-tests:
-    name: Python tests
-    runs-on: ubuntu-latest
+    name: Python
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    uses: ./.github/workflows/ci-python.yml
+    with: *tool-versions
 
+  devops-tests:
+    name: DevOps
+    needs: changes
+    if: needs.changes.outputs.devops == 'true'
+    uses: ./.github/workflows/ci-devops.yml
+    with: *tool-versions
+
+  ci-result:
+    name: CI result
+    if: always()
+    needs: [changes, workflow-lint, cpp-build, python-tests, devops-tests]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "29.3"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Python dependencies
-        working-directory: ./python/uniflow
-        run: uv sync --all-groups
-
-      - name: Generate protobuf
-        run: bash scripts/generate-proto.sh python
-
-      - name: Run Python lint and tests
-        working-directory: ./python/uniflow
+      - name: Require all selected checks to pass
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          uv run ruff check .
-          uv run pytest
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          jobs = json.loads(os.environ["JOB_RESULTS"])
+          required = {"changes", "workflow-lint"}
+          flags = jobs["changes"].get("outputs", {})
+          for flag, names in {
+              "cpp": ["cpp-build"],
+              "python": ["python-tests"],
+              "devops": ["devops-tests"],
+          }.items():
+              if flags.get(flag) == "true":
+                  required.update(names)
+          failed = [
+              name for name, job in jobs.items()
+              if job["result"] not in ("success", "skipped")
+              or (name in required and job["result"] != "success")
+          ]
+          for name, job in jobs.items():
+              print(f"{name}: {job['result']}")
+          sys.exit(1 if failed else 0)
+          PY

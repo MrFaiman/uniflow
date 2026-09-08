@@ -1,0 +1,112 @@
+name: DevOps CI
+
+on:
+  workflow_call:
+    inputs:
+      uv-version:
+        description: uv version used by CI
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  devops-tests:
+    name: DevOps validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: python/client/uv.lock
+          cache-suffix: devops
+
+      - name: Validate Compose profiles
+        run: |
+          docker compose -f devops/docker-compose.yaml config --quiet
+          for profile in all tx rx tx-external; do
+            docker compose --env-file .env.example \
+              -f devops/docker-compose.yaml --profile "$profile" config --quiet
+          done
+
+      - name: Test fixture helpers and router CLI
+        run: |
+          uv run --project python/client --frozen pytest -q \
+            devops/scripts/test_transfer_fixtures.py devops/router/test_router.py \
+            --junitxml=reports/devops.xml
+
+      - name: Lint shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          shellcheck devops/entrypoint.sh devops/run-transfer-test.sh scripts/generate-proto.sh
+
+      - name: Upload DevOps test reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: devops-reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  transfer-tests:
+    name: Docker transfer (${{ matrix.chaos }})
+    needs: devops-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        chaos: [none, mild]
+    env:
+      COMPOSE_PROJECT_NAME: uniflow-ci-${{ matrix.chaos }}
+      UNIFLOW_SEND_RATE_MBPS: "10"
+      STATS_INTERVAL_SEC: "1"
+      UNIFLOW_TEST_IN_DIR: ${{ github.workspace }}/.test-data/in
+      UNIFLOW_TEST_OUT_DIR: ${{ github.workspace }}/.test-data/out
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build images and test transfer, modification and deletion
+        env:
+          CHAOS_MODE: ${{ matrix.chaos }}
+        run: |
+          mkdir -p reports
+          bash devops/run-transfer-test.sh --keep-running --smoke \
+            --chaos "$CHAOS_MODE" --timeout 180 2>&1 | tee reports/transfer.log
+
+      - name: Collect Compose diagnostics
+        if: always()
+        run: |
+          mkdir -p reports
+          docker compose -f devops/docker-compose.yaml --profile all ps -a \
+            > reports/compose-status.txt
+          docker compose -f devops/docker-compose.yaml --profile all logs --no-color \
+            > reports/compose.log 2>&1
+
+      - name: Clean up test containers
+        if: always()
+        run: docker compose -f devops/docker-compose.yaml --profile all down --volumes --remove-orphans
+
+      - name: Upload transfer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: transfer-reports-${{ matrix.chaos }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7

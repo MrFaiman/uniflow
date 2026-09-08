@@ -1,0 +1,9 @@
+"""Shared transfer/protocol limits used by encoder, router, and validator."""
+
+SYMBOL_SIZE = 1024
+BLOCK_SIZE = 1024 * 1024
+MAX_SYMBOL_SIZE = 1400
+MAX_BLOCK_SIZE = BLOCK_SIZE
+SMALL_FILE_LIMIT = 10_000_000
+MIN_REPAIR_PACKETS = 16
+MAX_FINISHED_SESSIONS = 10_000
