@@ -2,6 +2,11 @@ syntax = "proto3";
 
 package uniflow;
 
+enum FileOperation {
+    WRITE = 0;
+    DELETE = 1;
+}
+
 message FilePacket {
     string file_id = 1;
     string file_name = 2;
@@ -23,4 +28,6 @@ message FilePacket {
     string packet_hash = 12;
     uint32 symbol_size = 13;
     uint64 block_offset = 14;
+
+    FileOperation operation = 15;
 }

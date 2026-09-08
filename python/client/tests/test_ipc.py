@@ -1,38 +1,48 @@
-import struct
 import threading
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
 
 from client.common.ipc import (
     connect_to_server,
     create_server,
+    receive_message,
     send_message,
 )
 
 
-def test_unix_socket(tmp_path):
-    socket_path = tmp_path / "test.sock"
-
+def test_unix_socket():
+    socket_path = Path(f"/tmp/uniflow-test-{uuid4().hex}.sock")
     server = create_server(socket_path)
+    received: list[bytes | None] = []
 
-    def receive_message():
-        connection, _ = server.accept()
+    try:
 
-        size_data = connection.recv(4)
-        message_size = struct.unpack("!I", size_data)[0]
+        def server_loop() -> None:
+            connection, _ = server.accept()
+            with connection:
+                received.append(receive_message(connection))
+                received.append(receive_message(connection))
 
-        message = connection.recv(message_size)
+        thread = threading.Thread(target=server_loop)
+        thread.start()
 
-        assert message == b"Hello"
+        client = connect_to_server(socket_path)
+        send_message(client, b"Hello")
+        client.close()
 
-        connection.close()
+        thread.join()
+    finally:
+        server.close()
+        socket_path.unlink(missing_ok=True)
 
-    thread = threading.Thread(target=receive_message)
-    thread.start()
+    assert received == [b"Hello", None]
 
-    client = connect_to_server(socket_path)
 
-    send_message(client, b"Hello")
-
-    client.close()
-
-    thread.join()
-    server.close()
+def test_server_does_not_remove_regular_file(tmp_path):
+    path = tmp_path / "keep"
+    path.write_text("keep")
+    with pytest.raises(ValueError):
+        create_server(path)
+    assert path.read_text() == "keep"

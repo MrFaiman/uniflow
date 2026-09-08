@@ -1,7 +1,3 @@
-# Generated protobuf
-uniflow/src/uniflow/pb/*_pb2.py
-uniflow/src/uniflow/pb/*_pb2.pyi
-
 # Python
 __pycache__/
 *.py[cod]

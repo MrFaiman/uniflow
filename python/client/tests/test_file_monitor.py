@@ -1,49 +1,107 @@
+import time
+from pathlib import Path
+
 from client.file_monitor.monitor import FileMonitor
 
 
-def test_get_files(tmp_path):
-    first_file = tmp_path / "first.txt"
-    second_file = tmp_path / "second.txt"
-    folder = tmp_path / "another_folder"
+def scan_until_changed(monitor: FileMonitor):
+    monitor.get_changed_files()
+    return monitor.get_changed_files()
 
+
+def test_get_files_is_recursive(tmp_path):
+    first_file = tmp_path / "first.txt"
+    nested_file = tmp_path / "nested" / "second.txt"
+    nested_file.parent.mkdir()
     first_file.write_text("Hello")
-    second_file.write_text("World")
-    folder.mkdir()
+    nested_file.write_text("World")
 
     monitor = FileMonitor(tmp_path)
-
     files = monitor.get_files()
 
     assert first_file in files
-    assert second_file in files
-    assert folder not in files
+    assert nested_file in files
 
 
-def test_get_new_file(tmp_path):
+def test_new_file_must_be_stable_before_transfer(tmp_path):
     monitor = FileMonitor(tmp_path)
-
-    assert monitor.get_changed_files() == []
-
     file = tmp_path / "new_file.txt"
     file.write_text("Hello")
 
-    changed_files = monitor.get_changed_files()
-
-    assert changed_files == [file]
-
+    assert monitor.get_changed_files() == []
+    assert monitor.get_changed_files() == [file]
     assert monitor.get_changed_files() == []
 
 
-def test_get_modified_file(tmp_path):
+def test_modified_file_is_detected_again(tmp_path):
     file = tmp_path / "file.txt"
     file.write_text("Hello")
-
     monitor = FileMonitor(tmp_path)
 
-    monitor.get_changed_files()
+    assert scan_until_changed(monitor) == [file]
 
     file.write_text("Hello again")
+    assert monitor.get_changed_files() == []
+    assert monitor.get_changed_files() == [file]
 
-    changed_files = monitor.get_changed_files()
 
-    assert changed_files == [file]
+def test_failed_transfer_is_retried(tmp_path):
+    file = tmp_path / "file.txt"
+    file.write_text("Hello")
+    monitor = FileMonitor(tmp_path)
+
+    assert scan_until_changed(monitor) == [file]
+    monitor.mark_failed(file)
+
+    assert monitor.get_changed_files() == []
+    assert monitor.get_changed_files() == [file]
+
+
+def test_deleted_file_is_reported(tmp_path):
+    file = tmp_path / "file.txt"
+    file.write_text("Hello")
+    monitor = FileMonitor(tmp_path)
+
+    assert scan_until_changed(monitor) == [file]
+    file.unlink()
+
+    assert monitor.get_changed_files() == []
+    assert monitor.get_deleted_files() == [file.resolve()]
+    monitor.mark_delete_sent(file)
+    assert monitor.get_deleted_files() == []
+
+
+def _wait_for(predicate, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.05)
+    raise AssertionError("timed out waiting for watchdog event")
+
+
+def test_watchdog_detects_create_modify_and_delete(tmp_path: Path):
+    monitor = FileMonitor(tmp_path, use_watchdog=True)
+    file = tmp_path / "watched.txt"
+
+    try:
+        file.write_text("one")
+        _wait_for(lambda: file.resolve() in monitor._dirty or monitor.pending)
+
+        assert monitor.get_changed_files() == []
+        assert monitor.get_changed_files() == [file.resolve()]
+
+        file.write_text("two")
+        _wait_for(
+            lambda: (
+                file.resolve() in monitor._dirty or file.resolve() in monitor.pending
+            )
+        )
+        assert monitor.get_changed_files() == []
+        assert monitor.get_changed_files() == [file.resolve()]
+
+        file.unlink()
+        _wait_for(lambda: file.resolve() in monitor.deleted_files)
+        assert monitor.get_deleted_files() == [file.resolve()]
+    finally:
+        monitor.stop()
