@@ -15,30 +15,50 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     send = sub.add_parser("send", help="watch a folder and send file changes")
-    send.add_argument("dir_path", type=Path, help="Folder to watch")
+    send.add_argument(
+        "dir_path",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Folder to watch (default: current working directory)",
+    )
     send.add_argument("target_ip", help="Destination IP address")
 
     sub.add_parser(
-        "receive",
+        "recv",
         help="receive files over UDP into a directory",
-    ).add_argument("dir_path", type=Path, help="Directory for received files")
+    ).add_argument(
+        "dir_path",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Receive directory (default: current working directory)",
+    )
 
     return parser
 
 
 def parse_send_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="uniflow send")
-    parser.add_argument("dir_path", type=Path, help="Folder to watch")
+    parser.add_argument(
+        "dir_path",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Folder to watch (default: current working directory)",
+    )
     parser.add_argument("target_ip", help="Destination IP address")
     return parser.parse_args(argv)
 
 
 def parse_receive_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="uniflow receive")
+    parser = argparse.ArgumentParser(prog="uniflow recv")
     parser.add_argument(
         "dir_path",
         type=Path,
-        help="Directory for received files",
+        nargs="?",
+        default=Path.cwd(),
+        help="Receive directory (default: current working directory)",
     )
     return parser.parse_args(argv)
 
@@ -49,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "send":
         run_send(args.dir_path, args.target_ip)
-    elif args.command == "receive":
+    elif args.command == "recv":
         run_receive(args.dir_path)
 
 
