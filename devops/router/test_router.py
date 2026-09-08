@@ -80,6 +80,19 @@ def test_router_config_defaults() -> None:
     config = RouterConfig()
     config.validate()
     assert config.ports == [9000, 9001, 9002]
+    assert config.random_seed == 1400
+
+
+@pytest.mark.parametrize(
+    ("env_seed", "cli_args", "expected"),
+    [(None, [], 1400), ("42", [], 42), ("42", ["--seed", "99"], 99)],
+)
+def test_router_seed_precedence(monkeypatch, env_seed, cli_args, expected):
+    monkeypatch.delenv("RANDOM_SEED", raising=False)
+    if env_seed is not None:
+        monkeypatch.setenv("RANDOM_SEED", env_seed)
+    config = config_from_args(create_parser().parse_args(cli_args))
+    assert config.random_seed == expected
 
 
 @pytest.mark.parametrize("values", [{"start_port": 0}, {"start_port": 65534}, {"packet_loss": float("nan")}, {"stats_interval_sec": -1}])

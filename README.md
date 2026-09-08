@@ -110,7 +110,7 @@ conservative Compose settings inherited from the two-PC branch.
 | `PACKET_LOSS` | `0.03` | Drop probability |
 | `BIT_FLIP` | `0.03` | Per-packet bit-flip probability |
 | `MISROUTING` | `0.03` | Wrong-path probability |
-| `RANDOM_SEED` | `1337` | Router RNG seed |
+| `RANDOM_SEED` | `1400` | Router RNG seed |
 | `STATS_INTERVAL_SEC` | `10` | Stats interval, 0 disables |
 | `LOG_PACKETS` | `0` | Set to 1 for individual fault logs |
 | `UNIFLOW_FEC_REPAIR_PERCENT` | `50` | Repair overhead, 0-200 percent |

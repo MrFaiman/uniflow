@@ -19,7 +19,7 @@ services:
       MISROUTING: "${MISROUTING:-0.03}"
       STATS_INTERVAL_SEC: "${STATS_INTERVAL_SEC:-10}"
       LOG_PACKETS: "${LOG_PACKETS:-0}"
-      RANDOM_SEED: "${RANDOM_SEED:-1337}"
+      RANDOM_SEED: "${RANDOM_SEED:-1400}"
     networks:
       - uniflow_net
     healthcheck:

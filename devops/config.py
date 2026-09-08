@@ -46,7 +46,7 @@ class RouterConfig:
     misrouting: float = 0.03
     stats_interval_sec: int = 10
     log_packets: bool = False
-    random_seed: int = 1337
+    random_seed: int = 1400
 
     @property
     def ports(self) -> list[int]:
@@ -77,7 +77,7 @@ class RouterConfig:
             misrouting=_env_float("MISROUTING", 0.03),
             stats_interval_sec=_env_int("STATS_INTERVAL_SEC", 10),
             log_packets=_env_flag("LOG_PACKETS"),
-            random_seed=_env_int("RANDOM_SEED", 1337),
+            random_seed=_env_int("RANDOM_SEED", 1400),
         )
         config.validate()
         return config
