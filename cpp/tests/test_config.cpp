@@ -101,12 +101,22 @@ TEST_CASE("SenderConfig validates environment", "[config]") {
 }
 
 TEST_CASE("SenderConfig rejects invalid values", "[config]") {
-    EnvClearGuard clear_socket("IPC_SOCKET_PATH");
-    REQUIRE_THROWS_AS(uniflow_net::SenderConfig::from_environment(), std::runtime_error);
-
     EnvGuard socket("IPC_SOCKET_PATH", "/tmp/uniflow-test.sock");
     EnvGuard bad_port("UDP_PORT", "70000");
     REQUIRE_THROWS_AS(uniflow_net::SenderConfig::from_environment(), std::runtime_error);
+}
+
+TEST_CASE("worker configs default to role-specific IPC paths", "[config]") {
+    EnvClearGuard clear_socket("IPC_SOCKET_PATH");
+    EnvGuard port("UDP_PORT", "9000");
+    EnvGuard rate("UNIFLOW_SEND_RATE_MBPS", "0");
+    for (int index = 0; index < 3; ++index) {
+        EnvGuard worker("UNIFLOW_WORKER_INDEX", std::to_string(index));
+        const auto sender = uniflow_net::SenderConfig::from_environment();
+        CHECK(sender.ipc_socket_path == "/tmp/uniflow/send.sock.sender." + std::to_string(index));
+        CHECK(uniflow_net::ReceiverConfig::from_environment().ipc_socket_path ==
+              "/tmp/uniflow/recv.sock");
+    }
 }
 
 TEST_CASE("ReceiverConfig validates environment", "[config]") {

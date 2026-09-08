@@ -23,6 +23,19 @@ TEST_CASE("Unix server refuses to replace regular files", "[sockets]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Unix server creates missing parent directories", "[sockets]") {
+    const auto folder = std::filesystem::temp_directory_path() /
+        ("uniflow-parent-" + std::to_string(::getpid()));
+    const auto path = folder / "nested" / "send.sock";
+    REQUIRE_FALSE(std::filesystem::exists(folder));
+    {
+        auto server = uniflow_net::create_unix_server(path.string());
+        CHECK(server);
+        CHECK(std::filesystem::is_socket(path));
+    }
+    std::filesystem::remove_all(folder);
+}
+
 TEST_CASE("create_unix_server accepts a local connection", "[sockets]") {
     const auto path =
         (std::filesystem::temp_directory_path() / "uniflow-test-unix-server.sock").string();

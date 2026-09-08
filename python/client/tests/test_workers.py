@@ -81,7 +81,9 @@ def test_three_senders_route_detect_failure_and_clean_up(net_binary, monkeypatch
                 listener.settimeout(5)
 
             monkeypatch.setenv("PORT", str(base))
-            monkeypatch.setenv("IPC_SOCKET_PATH", str(Path(folder) / "tx.sock"))
+            monkeypatch.setenv(
+                "IPC_SOCKET_PATH", str(Path(folder) / "nested" / "tx.sock")
+            )
             monkeypatch.setenv("UNIFLOW_NET_BINARY", net_binary)
             supervisor = SenderSupervisor("127.0.0.1")
             processes = []

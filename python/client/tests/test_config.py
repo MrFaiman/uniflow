@@ -22,12 +22,24 @@ def test_default_config(monkeypatch):
     ):
         monkeypatch.delenv(name, raising=False)
 
-    assert get_socket_path() == Path("/tmp/proto_ipc.sock")
-    assert get_sender_socket_path(2) == Path("/tmp/proto_ipc.sock.sender.2")
+    assert get_socket_path() == Path("/tmp/uniflow/recv.sock")
+    assert get_sender_socket_path(2) == Path("/tmp/uniflow/send.sock.sender.2")
     assert get_worker_count() == 3
     assert get_poll_interval() == 1.0
     assert get_base_port() == 9000
     assert get_repair_percent() == 20
+
+
+def test_socket_path_override(monkeypatch):
+    monkeypatch.setenv("IPC_SOCKET_PATH", "/tmp/custom.sock")
+    assert get_socket_path() == Path("/tmp/custom.sock")
+    assert get_sender_socket_path(1) == Path("/tmp/custom.sock.sender.1")
+
+
+def test_empty_socket_path_uses_role_defaults(monkeypatch):
+    monkeypatch.setenv("IPC_SOCKET_PATH", "")
+    assert get_socket_path() == Path("/tmp/uniflow/recv.sock")
+    assert get_sender_socket_path(0) == Path("/tmp/uniflow/send.sock.sender.0")
 
 
 def test_trio_requires_exactly_three_workers(monkeypatch):

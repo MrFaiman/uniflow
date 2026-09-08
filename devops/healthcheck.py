@@ -29,7 +29,8 @@ def worker_count(mode: str) -> int:
 def healthy(mode: str) -> bool:
     base = int(os.environ.get("PORT", "9000"))
     required = set(range(base, base + 3))
-    ipc = Path(os.environ.get("IPC_SOCKET_PATH", "/tmp/proto_ipc.sock"))
+    default_ipc = "/tmp/uniflow/send.sock" if mode == "send" else "/tmp/uniflow/recv.sock"
+    ipc = Path(os.environ.get("IPC_SOCKET_PATH") or default_ipc)
     if mode == "router":
         return required <= bound_udp_ports()
     if mode == "receive":

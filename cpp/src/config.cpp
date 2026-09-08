@@ -8,13 +8,6 @@
 namespace uniflow_net {
 namespace {
 
-[[nodiscard]] std::string require_non_empty(std::string value, std::string_view name) {
-    if (value.empty()) {
-        throw std::runtime_error(std::string(name) + " is required");
-    }
-    return value;
-}
-
 void validate_port(int port) {
     if (port < 1 || port > 65535) {
         throw std::runtime_error("UDP_PORT must be in range [1, 65535]");
@@ -79,11 +72,13 @@ double env_double(std::string_view name, double fallback) {
 }
 
 SenderConfig SenderConfig::from_environment() {
+    const int worker_index = env_int("UNIFLOW_WORKER_INDEX", 0);
     SenderConfig config{
-        .ipc_socket_path = require_non_empty(env_string("IPC_SOCKET_PATH"), "IPC_SOCKET_PATH"),
+        .ipc_socket_path = env_string(
+            "IPC_SOCKET_PATH", "/tmp/uniflow/send.sock.sender." + std::to_string(worker_index)),
         .router_host = env_string("ROUTER_HOST", "router"),
         .udp_port = env_int("UDP_PORT", 9000),
-        .worker_index = env_int("UNIFLOW_WORKER_INDEX", 0),
+        .worker_index = worker_index,
         .send_rate_mbps = env_double("UNIFLOW_SEND_RATE_MBPS", 0.0),
     };
 
@@ -100,7 +95,7 @@ SenderConfig SenderConfig::from_environment() {
 
 ReceiverConfig ReceiverConfig::from_environment() {
     ReceiverConfig config{
-        .ipc_socket_path = require_non_empty(env_string("IPC_SOCKET_PATH"), "IPC_SOCKET_PATH"),
+        .ipc_socket_path = env_string("IPC_SOCKET_PATH", "/tmp/uniflow/recv.sock"),
         .udp_port = env_int("UDP_PORT", 9000),
         .worker_index = env_int("UNIFLOW_WORKER_INDEX", 0),
     };

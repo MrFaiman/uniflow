@@ -118,9 +118,14 @@ conservative Compose settings inherited from the two-PC branch.
 | `UNIFLOW_WATCH_POLLING` | `1.0` | Maximum wait between processing passes |
 | `UNIFLOW_MAX_FILE_BYTES` | `1073741824` | Limit, at most 1 GiB |
 
-Compose fixes `PORT=9000`, `UNIFLOW_WORKERS=3`, and local IPC paths. For a
-native deployment, `PORT` may be 1-65533, `IPC_SOCKET_PATH` changes the socket
-prefix, and `UNIFLOW_NET_BINARY` points to the built worker. Native Python
+IPC defaults to `/tmp/uniflow/recv.sock` on RX and
+`/tmp/uniflow/send.sock.sender.0` through `.sender.2` on TX. Missing parent
+directories are created automatically. `IPC_SOCKET_PATH` overrides the RX
+socket or the Python TX socket base (the `.sender.N` suffix is retained).
+Standalone C++ workers treat an explicit override as the exact socket path.
+
+Compose fixes `PORT=9000` and `UNIFLOW_WORKERS=3`. For a native deployment,
+`PORT` may be 1-65533 and `UNIFLOW_NET_BINARY` points to the built worker. Native Python
 defaults to 20 percent FEC; standalone C++ defaults to unpaced sending.
 Export the example's FEC and pacing values to use the Compose policy locally.
 

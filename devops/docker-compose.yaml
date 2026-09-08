@@ -49,7 +49,7 @@ services:
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
-      IPC_SOCKET_PATH: /tmp/proto_ipc.sock
+      IPC_SOCKET_PATH: "${IPC_SOCKET_PATH:-/tmp/uniflow/recv.sock}"
       UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
       UNIFLOW_LOG_FILE: /var/log/uniflow/rx.log
       RECEIVE_DIR: /data/in
@@ -94,7 +94,7 @@ services:
     environment:
       PORT: "9000"
       UNIFLOW_WORKERS: "3"
-      IPC_SOCKET_PATH: /tmp/proto_ipc.sock
+      IPC_SOCKET_PATH: "${IPC_SOCKET_PATH:-/tmp/uniflow/send.sock}"
       UNIFLOW_NET_BINARY: /usr/local/bin/uniflow-net
       UNIFLOW_LOG_FILE: /var/log/uniflow/tx.log
       UNIFLOW_WATCH_POLLING: "${UNIFLOW_WATCH_POLLING:-1.0}"

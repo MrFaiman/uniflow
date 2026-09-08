@@ -11,6 +11,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -65,6 +66,10 @@ UniqueFd create_unix_server(std::string_view path) {
 
     const std::string path_owned{path};
     const sockaddr_un address = make_unix_address(path);
+    const auto parent = std::filesystem::path{path_owned}.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
     struct stat existing{};
     if (::lstat(path_owned.c_str(), &existing) == 0) {
         if (!S_ISSOCK(existing.st_mode)) {

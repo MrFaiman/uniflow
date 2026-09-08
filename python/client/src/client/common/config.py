@@ -2,7 +2,8 @@ import math
 import os
 from pathlib import Path
 
-DEFAULT_SOCKET_PATH = "/tmp/proto_ipc.sock"
+DEFAULT_SOCKET_PATH = "/tmp/uniflow/recv.sock"
+DEFAULT_SENDER_SOCKET_PATH = "/tmp/uniflow/send.sock"
 DEFAULT_WORKERS = 3
 DEFAULT_POLL_INTERVAL = 1.0
 DEFAULT_PORT = 9000
@@ -12,11 +13,12 @@ DEFAULT_NET_BINARY = "/usr/local/bin/uniflow-net"
 
 
 def get_socket_path() -> Path:
-    return Path(os.getenv("IPC_SOCKET_PATH", DEFAULT_SOCKET_PATH))
+    return Path(os.getenv("IPC_SOCKET_PATH") or DEFAULT_SOCKET_PATH)
 
 
 def get_sender_socket_path(worker_index: int) -> Path:
-    return Path(f"{get_socket_path()}.sender.{worker_index}")
+    base = os.getenv("IPC_SOCKET_PATH") or DEFAULT_SENDER_SOCKET_PATH
+    return Path(f"{base}.sender.{worker_index}")
 
 
 def get_worker_count() -> int:
