@@ -88,7 +88,7 @@ clean_data_dir() {
   find "$dir" -mindepth 1 ! -name '.gitkeep' -print0 | xargs -0 -r rm -rf
 }
 
-# shellcheck disable=SC2329 # invoked via trap EXIT
+# shellcheck disable=SC2317,SC2329 # invoked via trap EXIT (older/newer ShellCheck)
 teardown() {
   if [[ "$KEEP_RUNNING" -eq 0 ]]; then
     compose down
